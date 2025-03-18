@@ -1,0 +1,21 @@
+"0","attach(df_train)"
+"2","Os seguintes objetos são mascarados por df_train (pos = 5):
+
+    aerials_lost, aerials_won, ast, atk, att, attendance, blocks, captain, carries_att_3rd, ck,
+    clr, cmp, comp, crdr, crdy, crs, crspa, date, day, def, dis, dist, err, fld, fls,
+    formation, ga, gca, gf, home, int, kp, mis, off, opp.formation, opponent, pass_3rd, poss,
+    prgc, prgdist, prgp, psxg, recov, referee, result, resultado, round, saves, sca, season,
+    sh, sot, sota, sw, team_id, team_name, team_opp_id, time, tkl, tkl_att_3rd, tkl_def_3rd,
+    tkl_mid_3rd, tklw, totdist, touches, touches_att_3rd, touches_att_pen, touches_def_3rd,
+    touches_def_pen, touches_mid_3rd, venue, xa, xag, xg, xga
+
+"
+"0","# Y"
+"0","# team_name"
+"0",""
+"0","mult <- npmlt(Y ~ 1,"
+"0","              formula.npo = ~ -1 + (0 + atk + home| team_name) + (0 + def | opponent),"
+"0","              k = 1)"
+"2","Error in model.matrix.default(formula.npo, data = a) : 
+  quadro do modelo e fórmula não correspondem em model.matrix()
+"

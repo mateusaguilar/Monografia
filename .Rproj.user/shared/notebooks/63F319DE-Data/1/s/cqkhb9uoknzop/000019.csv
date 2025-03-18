@@ -1,0 +1,7 @@
+"0","matches = load_data(""brazil"", ""brasileirao_a"", ""match_history"") # Históorico de partidas"
+"2","Warning in for (i in (1L:cols)[do]) { :"
+"2","
+ "
+"2"," closing unused connection 3 (https://raw.githubusercontent.com/salvnetto/FootStats-Data/main/datasets/processed_data/brasileirao_a/squad.csv)
+"
+"0","players = load_data(""brazil"", ""brasileirao_a"", ""squad"") # Jogadores"

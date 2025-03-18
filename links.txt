@@ -1,0 +1,7 @@
+Pacote dlm (R)
+https://www.jstatsoft.org/article/view/v036i12
+
+Paper DLM
+https://cran.r-project.org/web/packages/dlm/vignettes/dlm.pdf
+
+https://link.springer.com/book/10.1007/b135794

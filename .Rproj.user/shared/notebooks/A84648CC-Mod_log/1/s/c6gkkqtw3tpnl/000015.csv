@@ -1,0 +1,1 @@
+"0","df_train$Y <- ifelse(df_train$resultado == 0, 0, 1)"

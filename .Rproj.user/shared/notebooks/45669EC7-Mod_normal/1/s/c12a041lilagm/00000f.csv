@@ -1,0 +1,22 @@
+"0","library(pROC)"
+"2","Type 'citation(""pROC"")' for a citation.
+"
+"2","
+Anexando pacote: ‘pROC’
+
+"
+"2","Os seguintes objetos são mascarados por ‘package:stats’:
+
+    cov, smooth, var
+
+"
+"0","df_test2 <- df_test2 %>%"
+"0","  mutate(win = as.numeric(resultado == 2),"
+"0","         draw = as.numeric(resultado == 1), "
+"0","         loss = as.numeric(resultado == 0))  "
+"0",""
+"0","# Criar curvas ROC para cada classe"
+"0","roc_win <- roc(df_test2$is_win, df_test2$gd_hat, levels = c(0,1))   # Para vitórias"
+"2","Error in roc.default(df_test2$is_win, df_test2$gd_hat, levels = c(0, 1)) : 
+  No valid data provided.
+"

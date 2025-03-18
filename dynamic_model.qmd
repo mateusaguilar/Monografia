@@ -1,0 +1,247 @@
+```{r}
+rm(list=ls())
+
+library(DYNMO)
+library(tidyverse)
+library(rstan)
+library(bayesplot)
+
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE) 
+```
+
+# Data cleaning
+
+```{r}
+process_dataframe = function(df_raw) {
+  columns_to_remove = c('comp', 'referee', 'league_name', 'league_id', 'team_opp_id', 'team_id', 'notes', 'captain')
+  
+  # Initial cleaning and transformations
+  df = df_raw %>%
+    select(-all_of(columns_to_remove)) %>%
+    mutate(
+      formation = str_remove(formation, "◆"),
+      opp.formation = str_remove(opp.formation, "◆"),
+      venue = ifelse(venue == 'Home', 1, 0)
+    )
+  
+  # Handling missing attendance data
+  df = df %>%
+    group_by(team_name, venue, season) %>%
+    mutate(attendance = ifelse(
+      is.na(attendance) & venue == 1,
+      round(mean(attendance, na.rm = TRUE)),
+      attendance
+    )) %>%
+    ungroup() %>%
+    mutate(attendance = ifelse(
+      is.na(attendance) & venue == 0,
+      round(mean(attendance, na.rm = TRUE)),
+      attendance
+    ))
+  
+  # Additional date-based calculations
+  df = df %>%
+    mutate(
+      date = ymd(date),
+      date_diff = as.numeric(difftime(max(date), date, units = "days")),
+      inv_date_diff = -log1p(date_diff)
+    )
+  
+  # Drop rows with NA and filter data
+  df = df %>%
+    #drop_na() %>%
+    filter(venue == 1) %>% 
+    filter(season == 2016)#%in% c(2024, 2023, 2022))
+  
+  # Generate team and opponent indices
+  unique_teams = unique(c(df$team_name, df$opponent))
+  df = df %>%
+    mutate(
+      team_name_index = match(team_name, unique_teams),
+      opponent_index = match(opponent, unique_teams)
+    ) %>% 
+    select(-c(8:11, 14:63)) 
+  
+  # Split into train and test datasets
+  df_train = df %>%
+    filter(round %in% 1:34 & season == 2024)
+  
+  df_test = df %>%
+    filter(round %in% 35:38 & season == 2024)
+  
+  return(list(df = df, df_train = df_train, df_test = df_test))
+}
+```
+
+```{r}
+df_raw = load_data("br", "match_history")
+
+df_processed = process_dataframe(df_raw)
+df = df_processed$df
+df_train = df_processed$df_train
+df_test = df_processed$df_test
+```
+
+# Fit
+
+```{r}
+data = list(
+  nteams = length(unique(df$team_name_index)),
+  ngames = nrow(df),
+  nrounds = length(unique(df$round)),
+  i_round = df$round,
+  x= df$gf,
+  y = df$ga,
+  h = df$team_name_index,
+  a = df$opponent_index
+)
+
+iter = 10000
+chains = 4
+cores = 8
+control = list(max_treedepth = 15)
+```
+
+```{r}
+#model1 = stan_model("models/dynamic_poisson.stan", model_name = "dynamic_poisson")
+#
+#fit1 = sampling(model1, 
+#               data = data, 
+#               iter = iter, 
+#               chains = chains, 
+#               cores = cores,
+#               control = control,
+#               refresh = 100               
+#               )
+#saveRDS(fit1, "results/dynamic_poisson.rds")
+fit1 = readRDS("results/dynamic_poisson.rds")
+```
+
+```{r}
+print(fit1)
+```
+
+
+# Analysis
+
+```{r}
+traceplot(fit1, inc_warmup = TRUE, pars = c("att[1,2]"))
+```
+
+
+# Simulations
+
+```{r}
+predict_games = function(game_index, possible_values, fit){
+  samples = rstan::extract(fit)
+  
+  x = samples$x_pred[, game_index]
+  y = samples$y_pred[, game_index]
+  
+  prob_matrix = matrix(0, nrow = length(possible_values), ncol = length(possible_values))
+  
+  for (i in possible_values) {
+    for (j in possible_values) {
+      joint_count = sum(x == i & y == j)
+      prob_matrix[i + 1, j + 1] = joint_count / length(x)
+    }
+  }
+  
+  rownames(prob_matrix) = possible_values
+  colnames(prob_matrix) = possible_values
+  
+  return(round(prob_matrix*100, 1))
+}
+```
+
+```{r}
+matrix1 = predict_games(379, 0:5, fit1)
+matrix1
+```
+
+```{r}
+sum(matrix1[lower.tri(matrix1)])
+sum(diag(matrix1))
+sum(matrix1[upper.tri(matrix1)])
+```
+
+
+```{r}
+predict_league = function(fit, new_data){
+  samples = rstan::extract(fit)
+
+  new_data$home_win = NA
+  new_data$draw = NA
+  new_data$home_lost = NA
+  
+  for(i in 1:nrow(new_data)){
+    h = new_data[i, ]$team_name_index
+    a = new_data[i, ]$opponent_index
+    x = samples$x_pred[, i]
+    y = samples$y_pred[, i]
+    n_preds = samples$x_pred[,i]
+    
+    new_data[i, ]$home_win = sum(x > y)/length(n_preds)
+    new_data[i, ]$draw = sum(x == y)/length(n_preds)
+    new_data[i, ]$home_lost = sum(x < y)/length(n_preds)
+  }
+  
+  predicted_games = new_data %>% 
+    mutate(
+      points_home = case_when(
+        home_win >= draw & home_win >= home_lost ~ 3,  # WIN
+        draw >= home_win & draw >= home_lost ~ 1, # DRAW
+        TRUE ~ 0  # LOSE
+      ),
+      points_away = case_when(
+         home_win >= draw & home_win >= home_lost ~ 0,  # WIN
+         draw >= home_win & draw >= home_lost ~ 1, # DRAW
+         TRUE ~ 3  # LOSE
+       ),
+       result_predicted = case_when(
+         home_win >= draw & home_win >= home_lost ~ 'W',  # WIN
+         draw >= home_win & draw >= home_lost ~ 'D', # DRAW
+         TRUE ~ 'L'  # LOSE
+       ),
+       sucess = if_else(result_predicted == result, 1, 0)
+    )
+  
+  standings_home = predicted_games %>% 
+    group_by(team_name) %>% 
+    summarise(points = sum(points_home),
+              wins = sum(result_predicted == "W"),
+              draws = sum(result_predicted == "D"),
+              loses = sum(result_predicted == "L"),
+              ) %>% 
+    arrange(desc(points))
+  standings_away = predicted_games %>% 
+    group_by(opponent) %>% 
+    summarise(points = sum(points_away),
+              wins = sum(result_predicted == "L"),
+              draws = sum(result_predicted == "D"),
+              loses = sum(result_predicted == "W"),
+              ) %>% 
+    arrange(desc(points))
+  
+  standings =  bind_rows(
+    standings_home %>% mutate(team = team_name),
+    standings_away %>% mutate(team = opponent)
+  ) %>%
+    group_by(team) %>%
+    summarise(
+      points = sum(points),
+      wins = sum(wins),
+      draws = sum(draws),
+      loses = sum(loses)
+    ) %>%
+    arrange(desc(points))
+  
+  
+  return(list(predicted_games, standings))
+}
+```
+
+```{r}
+df_predicted1 = predict_league(fit1, df)
+```

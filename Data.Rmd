@@ -1,0 +1,39 @@
+---
+title: "Base de Dados"
+author: "Mateus Aguilar"
+date: "`r format(Sys.Date(), '%d-%m-%Y')`"
+output: html_document
+---
+```{r}
+rm(list=ls())
+```
+
+
+```{r setup, include=FALSE}
+# Bibliotecas Necessárias
+library(glmmTMB)
+library(tidyverse)
+#remotes::install_github("salvnetto/DYNMO")
+library(FootStats)
+```
+
+```{r Bases de Dados, include = FALSE}
+matches = load_data("brazil", "brasileirao_a", "match_history") # Históorico de partidas
+players = load_data("brazil", "brasileirao_a", "squad") # Jogadores
+```
+
+```{r}
+matches$resultado <- factor(ifelse(matches$gf > matches$ga, 2,
+                            ifelse(matches$gf == matches$ga, 1, 0)))
+
+matches$home = 0
+matches$home[which(matches$venue == 'Home')] = 1
+
+matches$def = -1
+matches$atk = 1
+
+# Separando bases
+df_train <- subset(matches, season == 2024 & round <= 34)
+df_test <- subset(matches, season == 2024 & round > 34)
+```
+

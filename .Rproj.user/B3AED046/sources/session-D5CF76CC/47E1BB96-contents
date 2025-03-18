@@ -1,0 +1,538 @@
+---
+title: "Relatório Modelagem de Dados Discretos"
+author: 
+  - "Bárbara Oliveira Ribeiro"
+  - "Fábio Augusto da Silva Cruz"
+  - "Giovanna Louise Fernandes Marioza"
+  - "Mateus Aguilar Batista"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    toc: true  # Gera sumário automático
+    number_sections: true  # Numera as seções
+    latex_engine: xelatex  # Melhor suporte para fontes e formatação avançada
+header-includes:  # Configurações adicionais para formatação
+  - \usepackage{fancyhdr}  # Cabeçalho personalizado
+  - \pagestyle{fancy}  # Estilo de cabeçalho
+  - \fancyhf{}  # Limpar cabeçalho e rodapé
+  - \lhead{Relatório MDD}  # Cabeçalho à esquerda
+  - \rhead{`r Sys.Date()`}  # Data no cabeçalho à direita
+  - \cfoot{\thepage}  # Página no rodapé
+  - \usepackage{setspace}  # Controle do espaçamento
+  - \onehalfspacing  # Espaçamento 1.5
+  - \usepackage{titlesec}  # Personalização de seções
+  - \titleformat{\section}[block]{\large\bfseries}{\thesection.}{1em}{}  # Formatação da seção
+  - \titleformat{\subsection}[block]{\normalsize\bfseries}{\thesubsection.}{1em}{}  # Formatação da subseção
+  - \titleformat{\subsubsection}[block]{\normalsize\bfseries}{\thesubsubsection.}{1em}{}  # Formatação da subsubseção
+  - \usepackage{caption}  # Ajuste do espaçamento da legenda
+  - \captionsetup[table]{skip=8pt}  # Espaçamento entre tabela e legenda
+  - \usepackage{geometry}  # Definir margens
+  - \geometry{a4paper, left=1in, right=1in, top=1in, bottom=1in}  # Ajuste das margens
+  - \setmainfont{Times New Roman}  # Definir a fonte principal
+  - \fontsize{11}{13}\selectfont  # Tamanho de fonte 11pt com espaçamento 13pt
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+## Introdução
+
+<https://portal.inmet.gov.br/dadoshistoricos>
+
+Os dados foram retirados do Instituto Nacional de Meteorologia. Esses dados tem como objetivo informar dados meteorológicos observados nas estações meteorológicas automáticas distribuídas no território nacional. Eles foram retidos do seguinte endereço: <https://portal.inmet.gov.br/dadoshistoricos>.
+
+A variável escolhida para avaliação foi a temperatura máxima, que é medida a cada 1 hora. Foram utilizados os dados das 11:00 do dia 01 de agosto de 2022 até as 19:00 do dia 31 de agosto de 2022, nos garantindo um total de 729 observações por localidade. As medições foram feitas nas seguintes localidades:
+
+-   Jardim Botânico, em Porto Alegre, no Rio Grande do Sul
+-   Florianópolis, em Santa Catarina
+-   Cambará do Sul, no Rio Grande do Sul
+
+As temperaturas, para essa análise, foram categorizadas de acordo com o nível de conforto mostradas no artigo "Definição de faixas de conforto e desconforto térmico para espaços abertos em Curitiba, PR, com o índice UTCI". Elas foram divididas em:
+
+-   Desconforto para o frio (Ta \< 15ºC)
+-   Conforto (15ºC \< Ta \< 24ºC)
+-   Desconforto para o calor (Ta \> 24ºC)
+
+```{r}
+library(readr)
+library(readxl)
+library(dplyr)
+library(knitr)
+library(tidyr)
+library(kableExtra)
+library(scales)
+library(markovchain)
+library(janitor)
+library(VLMC)
+library(htmltools)
+```
+
+```{r dados}
+dados_mdd <- read_excel("dados mdd.xlsx")
+```
+
+```{r tratamento}
+df <- dados_mdd %>% 
+  mutate(
+    temperatura_maxima = case_when(
+      temperatura_maxima <= 15 ~ "Frio",
+      temperatura_maxima > 15 & temperatura_maxima <= 24 ~ "Confortável",
+      temperatura_maxima > 24 ~ "Quente",
+      TRUE ~ as.character(temperatura_maxima)
+    )
+  )
+
+```
+
+## Descritivas
+
+```{r tabela resumo}
+df1 <- df %>%
+  group_by(local, temperatura_maxima) %>%
+  summarise(frequencia = n()) %>%
+  ungroup() %>%
+  group_by(local) %>%
+  mutate(total = sum(frequencia),
+         porcentagem = (frequencia / total) * 100) %>%
+  ungroup() %>% 
+  mutate(porcentagem = percent(porcentagem / 100, accuracy = 0.01))
+
+kable(df1, "latex", col.names = c("Local", "Temperatura", "Frequência", "Total", "Porcentagem")) %>%
+  kable_styling("striped", full_width = F)
+
+```
+
+Foram observados muito mais dias de conforto ou frio, mas poucos de calor. Isso se deve ao fato de que as cidades analisadas tendem a apresentar temperaturas mais baixas, principalmente nessa época do ano, em que é inverno. Em Porto Alegre e Cambará do Sul, temos mais dias frios, e em Florianópolis mais dias confortáveis.
+
+```{r}
+#Preparar sequencias
+porto <- df %>% filter(local == "Porto Alegre") %>% pull(temperatura_maxima)
+cambara <- df %>% filter(local == "Cambara do Sul") %>% pull(temperatura_maxima)
+floripa <- df %>% filter(local == "Florianópolis") %>% pull(temperatura_maxima)
+
+modelo_ordem1_porto <- markovchainFit(porto)
+modelo_ordem1_cambara <- markovchainFit(cambara)
+modelo_ordem1_floripa <- markovchainFit(floripa)
+
+
+# Criar a sequência de estados com ordem 2
+seq_ordem2_porto <- paste(head(porto, -1), tail(porto, -1), sep = "_")
+seq_ordem2_cambara <- paste(head(cambara, -1), tail(cambara, -1), sep = "_")
+seq_ordem2_floripa <- paste(head(floripa, -1), tail(floripa, -1), sep = "_")
+
+# Ajustar o modelo de Cadeia de Markov com a sequência de ordem 2
+modelo_ordem2_porto <- markovchainFit(seq_ordem2_porto)
+modelo_ordem2_cambara <- markovchainFit(seq_ordem2_cambara)
+modelo_ordem2_floripa <- markovchainFit(seq_ordem2_floripa)
+
+# Criar a sequência de estados com ordem 3
+seq_ordem3_porto <- paste(head(porto, -2), tail(porto, -2), sep = "_")
+seq_ordem3_cambara <- paste(head(cambara, -2), tail(cambara, -2), sep = "_")
+seq_ordem3_floripa <- paste(head(floripa, -2), tail(floripa, -2), sep = "_")
+
+# Ajustar o modelo de Cadeia de Markov com a sequência de ordem 3
+modelo_ordem3_porto <- markovchainFit(seq_ordem3_porto)
+modelo_ordem3_cambara <- markovchainFit(seq_ordem3_cambara)
+modelo_ordem3_floripa <- markovchainFit(seq_ordem3_floripa)
+
+```
+
+```{r}
+library(VLMC)
+
+# Função para calcular o BIC
+calcular_bic <- function(modelo, sequencia) {
+  # Obter a log-verossimilhança do modelo
+  log_likelihood <- modelo$logLikelihood
+  
+  # Número de parâmetros estimados no modelo
+  num_params <- length(modelo$estimate)
+  
+  # Tamanho da sequência
+  n <- length(sequencia)
+  
+  # Calcular o BIC
+  bic <- -2 * log_likelihood + num_params * log(n)
+  return(bic)
+}
+
+# Função para ajustar modelos e calcular BIC para diferentes ordens
+calcular_bic_ordens <- function(sequencia, max_ordem) {
+  bics <- c()
+  for (ordem in 1:max_ordem) {
+    # Ajustar o modelo com uma ordem específica usando o VLMC
+    modelo <- vlmc(sequencia, maxdepth = ordem)
+    
+    # Calcular o BIC para o modelo ajustado
+    bic <- calcular_bic(modelo, sequencia)
+    
+    # Armazenar o BIC para essa ordem
+    bics <- c(bics, bic)
+  }
+  return(bics)
+}
+
+# Calcular o BIC para os modelos de Porto Alegre
+bic_ordem1_porto <- calcular_bic(modelo_ordem1_porto, length(porto))
+bic_ordem2_porto <- calcular_bic(modelo_ordem2_porto, length(porto))
+bic_ordem3_porto <- calcular_bic(modelo_ordem3_porto, length(porto))
+
+# Calcular o BIC para os modelos de Cambará do Sul
+bic_ordem1_cambara <- calcular_bic(modelo_ordem1_cambara, length(cambara))
+bic_ordem2_cambara <- calcular_bic(modelo_ordem2_cambara, length(cambara))
+bic_ordem3_cambara <- calcular_bic(modelo_ordem3_cambara, length(cambara))
+
+# Calcular o BIC para os modelos de Florianópolis
+bic_ordem1_floripa <- calcular_bic(modelo_ordem1_floripa, length(floripa))
+bic_ordem2_floripa <- calcular_bic(modelo_ordem2_floripa, length(floripa))
+bic_ordem3_floripa <- calcular_bic(modelo_ordem3_floripa, length(floripa))
+
+# Criar uma tabela com os BICs
+tabela_bic <- data.frame(
+  Local = c("Porto Alegre", "Cambará do Sul", "Florianópolis"),
+  BIC_Ordem1 = c(bic_ordem1_porto, bic_ordem1_cambara, bic_ordem1_floripa),
+  BIC_Ordem2 = c(bic_ordem2_porto, bic_ordem2_cambara, bic_ordem2_floripa),
+  BIC_Ordem3 = c(bic_ordem3_porto, bic_ordem3_cambara, bic_ordem3_floripa)
+)
+
+# Exibir a tabela com os BICs
+kable(tabela_bic, caption = "BIC para os Modelos de Cadeia de Markov") %>%
+  kable_styling("striped", full_width = F)
+
+
+```
+
+As três matrizes de transição refletem a dinâmica climática em Porto Alegre, Cambará do Sul e Florianópolis, revelando padrões similares de alta estabilidade nos estados Frio e Quente, enquanto o estado Confortável serve como o principal intermediário. Cambará do Sul apresenta maior predominância do estado Frio, com poucas transições para outros estados, destacando seu clima frio característico. Florianópolis, por outro lado, exibe maior estabilidade no estado Confortável, com poucas transições, refletindo seu clima mais moderado. Porto Alegre se encontra entre os dois, com o estado Confortável sendo moderadamente estável e maior interação entre os estados Frio e Confortável. Em todas as cidades, transições diretas entre Frio e Quente são inexistentes, reforçando a necessidade de um estado intermediário.
+
+Colocar uma do lado da outra, meu grid tá desconfigurando
+
+
+```{r matriz com probs}
+# Função para acessar e normalizar a matriz de transição
+normalizar_matriz <- function(modelo) {
+  # Acessar a matriz de transição do modelo
+  matriz <- modelo$estimate@transitionMatrix
+  
+  # Normalizar a matriz (certificando-se de que as somas das linhas são 1)
+  matriz_normalizada <- t(apply(matriz, 1, function(x) x / sum(x)))
+  
+  # Arredondar os valores para 4 casas decimais
+  matriz_normalizada <- round(matriz_normalizada, 4)
+  
+  return(matriz_normalizada)
+}
+
+# Normalizar as matrizes de transição para Porto Alegre
+matriz_normalizada_porto_ordem1 <- normalizar_matriz(modelo_ordem1_porto)
+matriz_normalizada_porto_ordem2 <- normalizar_matriz(modelo_ordem2_porto)
+matriz_normalizada_porto_ordem3 <- normalizar_matriz(modelo_ordem3_porto)
+
+# Normalizar as matrizes de transição para Cambará do Sul
+matriz_normalizada_cambara_ordem1 <- normalizar_matriz(modelo_ordem1_cambara)
+matriz_normalizada_cambara_ordem2 <- normalizar_matriz(modelo_ordem2_cambara)
+matriz_normalizada_cambara_ordem3 <- normalizar_matriz(modelo_ordem3_cambara)
+
+# Normalizar as matrizes de transição para Florianópolis
+matriz_normalizada_floripa_ordem1 <- normalizar_matriz(modelo_ordem1_floripa)
+matriz_normalizada_floripa_ordem2 <- normalizar_matriz(modelo_ordem2_floripa)
+matriz_normalizada_floripa_ordem3 <- normalizar_matriz(modelo_ordem3_floripa)
+
+# Função para gerar tabelas formatadas com ajuste de largura e tamanho de fonte
+gerar_tabela <- function(matriz, cidade, ordem) {
+  kable(matriz, caption = paste("Matriz Normalizada", cidade, "Ordem", ordem)) %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                  full_width = F, 
+                  position = "center") %>%
+    kableExtra::scroll_box(width = "50%", height = "100px") %>%
+    kable_styling(font_size = 7)  # Ajusta o tamanho da fonte para caber na página
+}
+
+# Exibir as matrizes normalizadas como tabelas formatadas
+
+# Porto Alegre
+gerar_tabela(matriz_normalizada_porto_ordem1, "Porto Alegre", 1)
+gerar_tabela(matriz_normalizada_porto_ordem2, "Porto Alegre", 2)
+gerar_tabela(matriz_normalizada_porto_ordem3, "Porto Alegre", 3)
+
+# Cambará do Sul
+gerar_tabela(matriz_normalizada_cambara_ordem1, "Cambará do Sul", 1)
+gerar_tabela(matriz_normalizada_cambara_ordem2, "Cambará do Sul", 2)
+gerar_tabela(matriz_normalizada_cambara_ordem3, "Cambará do Sul", 3)
+
+# Florianópolis
+gerar_tabela(matriz_normalizada_floripa_ordem1, "Florianópolis", 1)
+gerar_tabela(matriz_normalizada_floripa_ordem2, "Florianópolis", 2)
+gerar_tabela(matriz_normalizada_floripa_ordem3, "Florianópolis", 3)
+
+
+```
+
+As matrizes de transição de ordem 1 indicam que, nas três cidades, os estados climáticos possuem alta probabilidade de persistir no mesmo estado, refletindo uma forte estabilidade climática. Cambará do Sul e Porto Alegre apresentam padrões mais parecidos, com destaque para o estado Frio, que é o mais estável (probabilidades superiores a 93%), enquanto Confortável e Quente têm menores probabilidades de persistência. Florianópolis, por sua vez, exibe uma estabilidade ainda maior no estado Confortável (97%), indicando um clima mais moderado e menos propenso a transições. Em todas as cidades, transições diretas entre Frio e Quente permanecem inexistentes, e as transições entre Confortável e outros estados são limitadas, reforçando seu papel de intermediário climático.
+
+
+
+```{r sd}
+# Carregar a biblioteca necessária
+library(kableExtra)
+
+# Função para extrair informações do modelo ajustado
+extrair_informacoes_modelo <- function(modelo) {
+  # Extrair log-verossimilhança
+  log_likelihood <- modelo$logLikelihood
+  
+  # Extrair erro padrão (se disponível)
+  erro <- modelo$standardError
+  
+  # Extrair limites inferior e superior (se disponíveis)
+  limite_inferior <- modelo$lowerEndpointMatrix
+  limite_superior <- modelo$upperEndpointMatrix
+  
+  # Retornar como lista
+  return(list(
+    logLikelihood = log_likelihood,
+    erro = erro,
+    limite_inferior = limite_inferior,
+    limite_superior = limite_superior
+  ))
+}
+
+# Aqui você extrai os dados de cada modelo
+informacoes_porto_ordem1 <- extrair_informacoes_modelo(modelo_ordem1_porto)
+informacoes_porto_ordem2 <- extrair_informacoes_modelo(modelo_ordem2_porto)
+informacoes_porto_ordem3 <- extrair_informacoes_modelo(modelo_ordem3_porto)
+
+informacoes_cambara_ordem1 <- extrair_informacoes_modelo(modelo_ordem1_cambara)
+informacoes_cambara_ordem2 <- extrair_informacoes_modelo(modelo_ordem2_cambara)
+informacoes_cambara_ordem3 <- extrair_informacoes_modelo(modelo_ordem3_cambara)
+
+informacoes_floripa_ordem1 <- extrair_informacoes_modelo(modelo_ordem1_floripa)
+informacoes_floripa_ordem2 <- extrair_informacoes_modelo(modelo_ordem2_floripa)
+informacoes_floripa_ordem3 <- extrair_informacoes_modelo(modelo_ordem3_floripa)
+
+# Aqui você começa a formatar as tabelas individualmente para erro, limite inferior e limite superior
+
+# Tabela de Erro
+erro1 <- informacoes_porto_ordem1$erro
+erro2 <- informacoes_porto_ordem2$erro
+erro3 <- informacoes_porto_ordem3$erro
+
+erro4 <- informacoes_cambara_ordem1$erro
+erro5 <- informacoes_cambara_ordem2$erro
+erro6 <- informacoes_cambara_ordem3$erro
+
+erro7 <- informacoes_floripa_ordem1$erro
+erro8 <- informacoes_floripa_ordem2$erro
+erro9 <- informacoes_floripa_ordem3$erro
+
+# Tabela de Limite Inferior
+limite_inferior1 <- informacoes_porto_ordem1$limite_inferior
+limite_inferior2 <- informacoes_porto_ordem2$limite_inferior
+limite_inferior3 <- informacoes_porto_ordem3$limite_inferior
+
+limite_inferior4 <- informacoes_cambara_ordem1$limite_inferior
+limite_inferior5 <- informacoes_cambara_ordem2$limite_inferior
+limite_inferior6 <- informacoes_cambara_ordem3$limite_inferior
+
+limite_inferior7 <- informacoes_floripa_ordem1$limite_inferior
+limite_inferior8 <- informacoes_floripa_ordem2$limite_inferior
+limite_inferior9 <- informacoes_floripa_ordem3$limite_inferior
+
+# Tabela de Limite Superior
+limite_superior1 <- informacoes_porto_ordem1$limite_superior
+limite_superior2 <- informacoes_porto_ordem2$limite_superior
+limite_superior3 <- informacoes_porto_ordem3$limite_superior
+
+limite_superior4 <- informacoes_cambara_ordem1$limite_superior
+limite_superior5 <- informacoes_cambara_ordem2$limite_superior
+limite_superior6 <- informacoes_cambara_ordem3$limite_superior
+
+limite_superior7 <- informacoes_floripa_ordem1$limite_superior
+limite_superior8 <- informacoes_floripa_ordem2$limite_superior
+limite_superior9 <- informacoes_floripa_ordem3$limite_superior
+
+
+# Exibir a tabela de erro formatada em LaTeX com estilo clean
+kable(erro1, format = "latex", caption = "Tabela de Erro - Porto Alegre (Ordem 1)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(erro2, format = "latex", caption = "Tabela de Erro - Porto Alegre (Ordem 2)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(erro3, format = "latex", caption = "Tabela de Erro - Porto Alegre (Ordem 3)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(erro4, format = "latex", caption = "Tabela de Erro - Cambará do Sul (Ordem 1)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(erro5, format = "latex", caption = "Tabela de Erro - Cambará do Sul (Ordem 2)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(erro6, format = "latex", caption = "Tabela de Erro - Cambará do Sul (Ordem 3)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(erro7, format = "latex", caption = "Tabela de Erro - Florianópolis (Ordem 1)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(erro8, format = "latex", caption = "Tabela de Erro - Florianópolis (Ordem 2)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(erro9, format = "latex", caption = "Tabela de Erro - Florianópolis (Ordem 3)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+# Exibir a tabela de limite inferior formatada em LaTeX com estilo clean
+kable(limite_inferior1, format = "latex", caption = "Tabela de Limite Inferior - Porto Alegre (Ordem 1)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_inferior2, format = "latex", caption = "Tabela de Limite Inferior - Porto Alegre (Ordem 2)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_inferior3, format = "latex", caption = "Tabela de Limite Inferior - Porto Alegre (Ordem 3)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_inferior4, format = "latex", caption = "Tabela de Limite Inferior - Cambará do Sul (Ordem 1)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_inferior5, format = "latex", caption = "Tabela de Limite Inferior - Cambará do Sul (Ordem 2)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_inferior6, format = "latex", caption = "Tabela de Limite Inferior - Cambará do Sul (Ordem 3)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_inferior7, format = "latex", caption = "Tabela de Limite Inferior - Florianópolis (Ordem 1)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_inferior8, format = "latex", caption = "Tabela de Limite Inferior - Florianópolis (Ordem 2)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_inferior9, format = "latex", caption = "Tabela de Limite Inferior - Florianópolis (Ordem 3)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+# Exibir a tabela de limite superior formatada em LaTeX com estilo clean
+kable(limite_superior1, format = "latex", caption = "Tabela de Limite Superior - Porto Alegre (Ordem 1)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_superior2, format = "latex", caption = "Tabela de Limite Superior - Porto Alegre (Ordem 2)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_superior3, format = "latex", caption = "Tabela de Limite Superior - Porto Alegre (Ordem 3)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_superior4, format = "latex", caption = "Tabela de Limite Superior - Cambará do Sul (Ordem 1)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_superior5, format = "latex", caption = "Tabela de Limite Superior - Cambará do Sul (Ordem 2)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_superior6, format = "latex", caption = "Tabela de Limite Superior - Cambará do Sul (Ordem 3)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_superior7, format = "latex", caption = "Tabela de Limite Superior - Florianópolis (Ordem 1)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_superior8, format = "latex", caption = "Tabela de Limite Superior - Florianópolis (Ordem 2)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+kable(limite_superior9, format = "latex", caption = "Tabela de Limite Superior - Florianópolis (Ordem 3)") %>%
+  kable_styling(latex_options = c("basic"), full_width = F, position = "center") %>%
+  kable_styling(font_size = 7)
+
+```
+
+Deixar bonitinho e interpretar
+
+## Testando independência
+
+Abaixo temos a tabela de resultado com os p-valores para o teste Qui-quadrado para independência, cujas hipóteses são... e alpha foi ...
+
+```{r}
+# Carregar a biblioteca necessária
+library(kableExtra)
+
+# Criar listas para armazenar as matrizes de transição normalizadas para cada local e ordem
+matrizes_porto <- list(
+  matriz_normalizada_porto_ordem1,
+  matriz_normalizada_porto_ordem2,
+  matriz_normalizada_porto_ordem3
+)
+
+matrizes_cambara <- list(
+  matriz_normalizada_cambara_ordem1,
+  matriz_normalizada_cambara_ordem2,
+  matriz_normalizada_cambara_ordem3
+)
+
+matrizes_floripa <- list(
+  matriz_normalizada_floripa_ordem1,
+  matriz_normalizada_floripa_ordem2,
+  matriz_normalizada_floripa_ordem3
+)
+
+# Função para testar a independência usando o teste qui-quadrado
+testar_independencia <- function(matriz) {
+  # Verificar se a matriz é válida (não nula)
+  if (is.null(matriz)) {
+    return(NA)  # Retornar NA se a matriz for nula
+  }
+  
+  # Realizar o teste qui-quadrado
+  teste <- tryCatch({
+    chisq.test(matriz)
+  }, error = function(e) {
+    return(NULL)  # Retornar NULL se ocorrer erro no teste
+  })
+  
+  # Verificar se o teste foi realizado com sucesso
+  if (is.null(teste)) {
+    return(NA)  # Retornar NA se o teste falhar
+  }
+  
+  # Retornar o valor p do teste
+  return(teste$p.value)
+}
+
+# Testar independência para cada local e ordem
+p_valores <- data.frame(
+  Local = c("Porto Alegre", "Cambará do Sul", "Florianópolis"),
+  Ordem_1 = c(testar_independencia(matrizes_porto[[1]]), testar_independencia(matrizes_cambara[[1]]), testar_independencia(matrizes_floripa[[1]])),
+  Ordem_2 = c(testar_independencia(matrizes_porto[[2]]), testar_independencia(matrizes_cambara[[2]]), testar_independencia(matrizes_floripa[[2]])),
+  Ordem_3 = c(testar_independencia(matrizes_porto[[3]]), testar_independencia(matrizes_cambara[[3]]), testar_independencia(matrizes_floripa[[3]]))
+)
+
+# Exibir a tabela de p-valores com estilo clean em LaTeX
+kable(p_valores, format = "latex", caption = "Tabela de P-Valores do Teste Qui-Quadrado para Independência") %>%
+  kable_styling(latex_options = c("basic"))
+
+```
+
+O resultado é... tudo estatisticamente significativo
+
+Vamos ajustar outros modelos

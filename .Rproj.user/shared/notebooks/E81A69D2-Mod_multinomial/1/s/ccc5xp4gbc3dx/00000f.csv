@@ -1,0 +1,14 @@
+"0","#rm(list=ls())"
+"0","library(""mixcat"")"
+"2","Aviso: pacote ‘mixcat’ foi compilado no R versão 4.4.3"
+"2","Carregando pacotes exigidos: statmod
+"
+"2","
+Anexando pacote: ‘statmod’
+
+"
+"2","O seguinte objeto é mascarado por ‘package:glmmTMB’:
+
+    tweedie
+
+"

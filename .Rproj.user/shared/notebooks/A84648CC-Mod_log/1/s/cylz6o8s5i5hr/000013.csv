@@ -1,0 +1,3 @@
+"0","atk = data.frame(atk = a$cond$team_name$atk, team_name = row.names(a$cond$team_name))"
+"0","def = data.frame(a$cond$opponent, opponent = row.names(a$cond$opponent))"
+"0","home = data.frame(home = a$cond$team_name$home, team_name = row.names(a$cond$team_name))"
