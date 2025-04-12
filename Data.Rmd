@@ -18,7 +18,7 @@ library(FootStats)
 ```
 
 ```{r Bases de Dados, include = FALSE}
-matches = load_data("brazil", "brasileirao_a", "match_history") # Históorico de partidas
+matches = load_data("brazil", "brasileirao_a", "match_history") # Histórico de partidas
 players = load_data("brazil", "brasileirao_a", "squad") # Jogadores
 ```
 
@@ -33,7 +33,6 @@ matches$def = -1
 matches$atk = 1
 
 # Separando bases
-df_train <- subset(matches, season == 2024 & round <= 34)
-df_test <- subset(matches, season == 2024 & round > 34)
+df_train <- subset(matches, season == 2024 & round <= 30)
+df_test <- subset(matches, season == 2024 & round > 30 & round <35) 
 ```
-
