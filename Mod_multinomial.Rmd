@@ -6,27 +6,19 @@ output: html_document
 ---
 ```{r}
 #rm(list=ls())
-library("mixcat")
 ```
 
 ```{r}
-df_train$Y <- factor(df_train$resultado, levels = c(0, 1, 2), labels = c("L", "D", "W"))
+## unloading FootStats (problema com o "predict")
+unloadNamespace("FootStats")
 ```
 
-
-```{r Modelo multal, include=FALSE}
-attach(df_train)
-
-# Y
-# team_name
-
-mult <- npmlt(Y ~ 1,
-              formula.npo = ~ -1 + (0 + atk + home| team_name) + (0 + def | opponent),
-              k = 1)
-summary(mult)
-a = ranef(mult)
-
-detach(df_train)
+```{r Modelo Normal, include=FALSE}
+norm <- glmmTMB(gf ~ (0 + atk + home | team_name) + (0 + def | opponent), 
+                data = df_train, 
+                family = gaussian(link = 'identity'))
+summary(norm)
+a = ranef(norm)
 ```
 
 ```{r Fatores}
@@ -36,17 +28,17 @@ home = data.frame(home = a$cond$team_name$home, team_name = row.names(a$cond$tea
 ```
 
 ```{r}
-c = coef(mult)
+c = coef(norm)
 #d = c$cond$team_name[1, c("(Intercept)", "home")]
-#d = c$cond$team_name[1, c("(Intercept)")]
-vars <- data.frame(model.matrix(mult)) 
+d = c$cond$team_name[1, c("(Intercept)")]
+vars <- data.frame(model.matrix(norm)) 
 #vars2 <- data.frame('Intercept' = vars[,1] * d[1,1], 'home' =  vars[,2] * d[1,2])
-#vars2 <- data.frame('Intercept' = vars[,1] * d[1])
+vars2 <- data.frame('Intercept' = vars[,1] * d[1])
 
 table <- df_train %>% 
   select(gf, ga, round, venue, team_name, opponent) %>% 
-  #bind_cols(vars2) %>% 
-  bind_cols(data.frame(Predito = predict(mult))) %>% 
+  bind_cols(vars2) %>%
+  bind_cols(data.frame(Predito = predict(norm))) %>% 
   merge(atk, by = 'team_name') %>% 
   merge(def, by = 'opponent') %>% 
   merge(home, by = 'team_name')
@@ -58,61 +50,222 @@ table <- df_train %>%
 df_test <- df_test %>% 
   select(gf, ga, round, venue, team_name, opponent, home, atk, def, resultado)
 
-# Previsões para resultados (pi_hat)
-df_test$pi_hat <- predict(mult, df_test, type = "response")
+# Previsões para gols marcados (gf_hat)
+df_test$gf_hat <- predict(norm, df_test, type = "response")
+
+# Criar um novo dataframe para prever gols sofridos (invertendo times)
+df_test_ga <- df_test
+df_test_ga$team_name <- df_test$opponent
+df_test_ga$opponent <- df_test$team_name
+df_test_ga <- df_test_ga %>% rename(ga_hat = 'gf_hat')
+
+#df_test$ga_hat <- df_test_ga$gf_hat
+
+df_test_ga <- df_test_ga %>% 
+  select(round, team_name, opponent, ga_hat)
+df_test <- merge(df_test, df_test_ga, by = c('round', 'team_name', 'opponent'))
+
+# Previsão para gols sofridos (ga_hat)
+#df_test$ga_hat <- predict(fit1, df_test_ga, type = "response")
 
 df_test2 <- df_test %>% subset(venue == 'Home')
+df_test2$gd_hat <- df_test2$gf_hat - df_test2$ga_hat
 
-df_test2$Y <- ifelse(df_test2$resultado == 0, 0, 1)
 ```
 
 ```{r}
-G = 100
-grid <- (1:G)/G  # função 
+df_train <- df_train %>% 
+  select(gf, ga, round, venue, team_name, opponent, home, atk, def, resultado)
 
+# Previsões para gols marcados (gf_hat)
+df_train$gf_hat <- predict(norm, df_train, type = "response")
 
-M <- matrix(NA, nrow = NROW(df_test2), ncol = G)
+# Criar um novo dataframe para prever gols sofridos (invertendo times)
+df_train_ga <- df_train
+df_train_ga$team_name <- df_train$opponent
+df_train_ga$opponent <- df_train$team_name
+df_train_ga <- df_train_ga %>% rename(ga_hat = 'gf_hat')
 
-for(j in 1:G){
-  M[, j] = ifelse(df_test2$pi_hat >= grid[j], 1, 0)
-}
+#df_train$ga_hat <- df_train_ga$gf_hat
 
-M2 <- matrix(NA, nrow = G, ncol = 4)
+df_train_ga <- df_train_ga %>% 
+  select(round, team_name, opponent, ga_hat)
 
-for(i in 1:G){
-  M2[i, 1] = mean((M[, i] == 1) & (df_test2$Y == 1))    # sensibilidade
-  M2[i, 2] = mean((M[, i] == 0) & (df_test2$Y == 0))    # especificidade
-  M2[i, 3] = mean(M[, i] == df_test2$Y)                 # acurácia
-}
-# M2[, 4] = M2[, 1] + M2[, 2] - 1                         # Indice de Youden
-M2[, 4] = (M2[, 1] + M2[, 2])/2                         # acurácia balanceada
+# Previsão para gols sofridos (ga_hat)
+#df_train$ga_hat <- predict(fit1, df_train_ga, type = "response")
 
-# M2
-
-# classificador
-K <- max(which(M2[, 4] == max(M2[, 4])))
-#df_test2$y_hat = M[, min(which(M2[, 4] == max(M2[, 4])))]
-df_test2$y_hat = M[, max(which(M2[, 4] == max(M2[, 4])))]
+df_train <- merge(df_train, df_train_ga, by = c('round', 'team_name', 'opponent'))
+df_train2 <- df_train %>% subset(venue == 'Home')
+df_train2$gd_hat <- df_train2$gf_hat - df_train2$ga_hat
 ```
 
 
-```{r Matriz de confusão e Acurácia}
-# Classificando vitória (2), empate (1) ou derrota (0)
-# Fatores de corte
-#df_test2$gd_hat <- df_test2$gf_hat - df_test2$ga_hat
-#t1 = 0.07
-#t2 = 0.50
+```{r}
+# Categorização de variáveis
+df_test2$Y <- factor(df_test2$resultado, 
+                     levels = c(0, 1, 2), 
+                     labels = c("L", "D", "W"))
+df_train2$Y <- factor(df_train2$resultado, 
+                     levels = c(0, 1, 2), 
+                     labels = c("L", "D", "W"))
+```
 
-#df_test2$pred_result <- factor(ifelse(df_test2$gd_hat > t2, 2,
-#                                      ifelse(df_test2$gd_hat < t1, 0, 1)))
 
+```{r, Multiclasse}
+# Classificador na base de treino
+
+G = 100
+grid <- seq(min(df_train2$gd_hat), 
+            max(df_train2$gd_hat), 
+            length.out = G)
+
+M <- matrix(0, nrow = G, ncol = G)
+
+
+for(i in 1:G){
+  for(j in i:G){
+      
+    M[i, j] =
+      ( sum( (df_train2$gd_hat <= grid[i]) & (df_train2$Y == 'L') ) / sum(df_train2$Y == 'L') + 
+      sum( (df_train2$gd_hat > grid[i] & df_train2$gd_hat < grid[j]) & (df_train2$Y == 'D') ) / sum((df_train2$Y == 'D')) + 
+      sum( (df_train2$gd_hat >= grid[j]) & (df_train2$Y == 'W') ) / sum(df_train2$Y == 'W') ) / 3
+    
+  }
+}
+
+
+# Encontrando os melhores limiares (t1 e t2) para maximizar a acurácia
+indices_max <- which(M == max(M, na.rm = TRUE), arr.ind = TRUE)
+#i_max <- indices_max[1, "row"]
+#j_max <- indices_max[1, "col"]
+
+#t1 <- grid[j_max]
+#t2 <- grid[i_max]
+#t1  
+#t2  
+
+
+```
+
+
+
+```{r}
+taus = matrix(NA, nrow = NROW(indices_max), ncol = 2)
+for(i in 1:NROW(indices_max)){
+  taus[i, ] = c(grid[indices_max[i, 1]], grid[indices_max[i, 2]])
+  
+}
+
+taus_diff = taus[, 2] - taus[, 1]
+tau_max_diff = which(taus_diff == max(taus_diff))
+t1 = taus[tau_max_diff, 1]
+t2 = taus[tau_max_diff, 2]
+t1; t2
+
+# Classificação final com os limiares otimizados
+df_train2$y_hat <- factor(ifelse(df_train2$gd_hat <= t1, 'L',
+                                ifelse(df_train2$gd_hat >= t2, 'W', 'D')),
+                                levels = c("L", "D", "W"))
+```
+
+
+```{r}
+# res_acc <- optimizar_thresholds_acc(df_train2, grid)
+# res_f1  <- optimizar_thresholds_f1(df_train2, grid)
+# 
+# # Comparar as melhores tuplas e scores
+# res_acc$best_thresholds
+# res_f1$best_thresholds
+# 
+# print(paste("Acurácia otimizada:", round(res_acc$score, 3)))
+# print(paste("F1 macro otimizado:", round(res_f1$score, 3)))
+# 
+# # Ver matrizes de confusão
+# res_acc$confusion_matrix
+# res_f1$confusion_matrix
+```
+
+
+```{r}
 # Matriz de Confusão
-conf_matrix <- table(Predito = df_test2$y_hat, Real = df_test2$Y)
+conf_matrix <- table(Real = df_train2$Y, Predito = df_train2$y_hat)
 print(conf_matrix)
 
-# Acurácia geral
-print(paste("Acuracia: ", M2[K, 3]))
-print(paste("Sensibilidade: ", M2[K, 1]))
-print(paste("Especificidade: ", M2[K, 2]))
-print(paste("Acuracia balanceada: ", M2[K, 4]))
+# Cálculo da Acurácia Geral
+acc = sum(diag(conf_matrix))/sum(conf_matrix)
+print(paste("Acurácia geral:", acc))
+```
+
+
+
+```{r, Multiclasse}
+# Classificador na Base de teste
+
+G = 100
+grid <- seq(min(df_test2$gd_hat), 
+            max(df_test2$gd_hat), 
+            length.out = G)
+
+M <- matrix(0, nrow = G, ncol = G)
+
+
+for(i in 1:G){
+  for(j in i:G){
+      
+    M[i, j] =
+      ( sum( (df_test2$gd_hat <= grid[i]) & (df_test2$Y == 'L') ) / sum(df_test2$Y == 'L') + 
+      sum( (df_test2$gd_hat > grid[i] & df_test2$gd_hat < grid[j]) & (df_test2$Y == 'D') ) / sum((df_test2$Y == 'D')) + 
+      sum( (df_test2$gd_hat >= grid[j]) & (df_test2$Y == 'W') ) / sum(df_test2$Y == 'W') ) / 3
+    
+  }
+}
+
+
+# Encontrando os melhores limiares (t1 e t2) para maximizar a acurácia
+indices_max <- which(M == max(M, na.rm = TRUE), arr.ind = TRUE)
+#i_max <- indices_max[1, "row"]
+#j_max <- indices_max[1, "col"]
+
+#t1 <- grid[j_max]
+#t2 <- grid[i_max]
+#t1  
+#t2  
+
+
+```
+
+
+
+```{r}
+taus = matrix(NA, nrow = NROW(indices_max), ncol = 2)
+for(i in 1:NROW(indices_max)){
+  taus[i, ] = c(grid[indices_max[i, 1]], grid[indices_max[i, 2]])
+  
+}
+
+taus_diff = taus[, 2] - taus[, 1]
+tau_max_diff = which(taus_diff == min(taus_diff))
+t1 = taus[tau_max_diff, 1]
+t2 = taus[tau_max_diff, 2]
+t1; t2
+
+# Classificação final com os limiares otimizados
+df_test2$y_hat <- factor(ifelse(df_test2$gd_hat <= t1, 'L',
+                                ifelse(df_test2$gd_hat >= t2, 'W', 'D')),
+                                levels = c("L", "D", "W"))
+```
+
+```{r Matriz de confusão e Acurácia}
+# Classificação final com os limiares otimizados
+df_test2$y_hat <- factor(ifelse(df_test2$gd_hat <= t1, 'L',
+                                ifelse(df_test2$gd_hat >= t2, 'W', 'D')),
+                                levels = c("L", "D", "W"))
+
+# Matriz de Confusão
+conf_matrix <- table(Real = df_test2$Y, Predito = df_test2$y_hat)
+print(conf_matrix)
+
+# Cálculo da Acurácia Geral
+acc = sum(diag(conf_matrix))/sum(conf_matrix)
+print(paste("Acurácia geral:", acc))
 ```
