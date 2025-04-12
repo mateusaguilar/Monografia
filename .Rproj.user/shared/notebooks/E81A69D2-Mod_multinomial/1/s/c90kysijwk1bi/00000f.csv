@@ -1,1 +1,0 @@
-"0","df_train$Y <- factor(df_train$resultado, levels = c(0, 1, 2), labels = c(""L"", ""D"", ""W""))"

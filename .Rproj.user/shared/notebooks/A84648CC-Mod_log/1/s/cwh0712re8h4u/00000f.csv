@@ -1,5 +1,0 @@
-"0","log <- glmmTMB(gf ~ 1 + (0 + atk + home | team_name) + (0 + def | opponent), "
-"0","                data = df_train, "
-"0","                family = log(link = 'logit'))"
-"2","Error in get_family(family) : argument ""x"" is missing, with no default
-"
