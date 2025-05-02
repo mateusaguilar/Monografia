@@ -21,7 +21,7 @@ df_train$Y <- factor(df_train$resultado,
 
 
 ```{r Modelo logal, include=FALSE}
-log <- brm(Y ~  (0 + atk | team_name) + (0 + def | opponent) + home * team_name, 
+log <- brm(Y ~  (0 + atk | team_name) + (0 + def | opponent) + home:team_name, 
                 data = df_train, 
                 family = categorical(link = 'logit', 
                                      refcat = 'L'))
