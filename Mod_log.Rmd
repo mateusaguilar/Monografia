@@ -5,106 +5,134 @@ date: "`r format(Sys.Date(), '%d-%m-%Y')`"
 output: html_document
 ---
 ```{r}
-#rm(list=ls())
+#library(brms)
+unloadNamespace("FootStats")
 ```
 
 ```{r}
-df_train$Y <- ifelse(df_train$resultado == 0, 0, 1)
+# Categorização de variáveis
+df_test$Y <- factor(df_test$resultado, 
+                     levels = c(0, 1, 2), 
+                     labels = c("L", "D", "W"))
+df_train$Y <- factor(df_train$resultado, 
+                     levels = c(0, 1, 2), 
+                     labels = c("L", "D", "W"))
 ```
 
 
 ```{r Modelo logal, include=FALSE}
-log <- glmmTMB(Y ~ -1 + (0 + atk + home| team_name) + (0 + def | opponent), 
+log <- brm(Y ~  (0 + atk | team_name) + (0 + def | opponent) + home * team_name, 
                 data = df_train, 
-                family = binomial(link = 'logit'))
+                family = categorical(link = 'logit', 
+                                     refcat = 'L'))
 summary(log)
 a = ranef(log)
 ```
 
 ```{r Fatores}
-atk = data.frame(atk = a$cond$team_name$atk, team_name = row.names(a$cond$team_name))
-def = data.frame(a$cond$opponent, opponent = row.names(a$cond$opponent))
-home = data.frame(home = a$cond$team_name$home, team_name = row.names(a$cond$team_name))
+# atk_W = data.frame(atk_W = a$team_name[, 'Estimate', 'muW_atk'], team_name = row.names(a$team_name[, ,  'muW_atk']))
+# atk_D = data.frame(atk_D = a$team_name[, 'Estimate', 'muD_atk'], team_name = row.names(a$team_name[, ,  'muD_atk']))
+# def_W = data.frame(def_W = a$opponent[, 'Estimate', 'muW_def'], opponent = row.names(a$opponent[, , 'muW_def']))
+# def_D = data.frame(def_D = a$opponent[, 'Estimate', 'muD_def'], opponent = row.names(a$opponent[, , 'muD_def']))
+# home_W = data.frame(home_W = a$team_name[, 'Estimate', 'muW_home'], team_name = row.names(a$team_name[, ,  'muW_home']))
+# home_D = data.frame(home_D = a$team_name[, 'Estimate', 'muD_home'], team_name = row.names(a$team_name[, ,  'muD_home']))
 ```
 
 ```{r}
 c = coef(log)
-#d = c$cond$team_name[1, c("(Intercept)", "home")]
-#d = c$cond$team_name[1, c("(Intercept)")]
-vars <- data.frame(model.matrix(log)) 
-#vars2 <- data.frame('Intercept' = vars[,1] * d[1,1], 'home' =  vars[,2] * d[1,2])
-#vars2 <- data.frame('Intercept' = vars[,1] * d[1])
 
 table <- df_train %>% 
   select(gf, ga, round, venue, team_name, opponent) %>% 
   #bind_cols(vars2) %>% 
-  bind_cols(data.frame(Predito = predict(log))) %>% 
-  merge(atk, by = 'team_name') %>% 
-  merge(def, by = 'opponent') %>% 
-  merge(home, by = 'team_name')
+  bind_cols(predict(log)) #%>% 
+  # merge(atk_W, by = 'team_name') %>% 
+  # merge(atk_D, by = 'team_name') %>% 
+  # merge(def_W, by = 'opponent') %>%
+  # merge(def_D, by = 'opponent') %>%
+  # merge(home_W, by = 'team_name') %>% 
+  # merge(home_D, by = 'team_name')
 
 #View(table)
 ```
 
 ```{r}
-df_test <- df_test %>% 
-  select(gf, ga, round, venue, team_name, opponent, home, atk, def, resultado)
+df_train <- df_train %>% 
+  select(gf, ga, round, venue, team_name, opponent, home, atk, def, resultado, Y)
 
-# Previsões para resultados (pi_hat)
-df_test$pi_hat <- predict(log, df_test, type = "response")
+df_train <- df_train %>% 
+           merge(
+             table %>% select(team_name, opponent, round, 
+                              `P(Y = L)`,`P(Y = D)`,`P(Y = W)`), 
+             by = c('round', 'team_name', 'opponent')
+             )
 
-df_test2 <- df_test %>% subset(venue == 'Home')
-
-df_test2$Y <- ifelse(df_test2$resultado == 0, 0, 1)
+df_train2 <- df_train %>% subset(venue == 'Home')
 ```
 
 ```{r}
-G = 100
-grid <- (1:G)/G  # função 
+df_test <- df_test %>% 
+  select(gf, ga, round, venue, team_name, opponent, home, atk, def, resultado, Y)
 
+df_test <- df_test %>%
+            bind_cols(
+            predict(log, df_test, type = "probs") %>%
+            as.data.frame() %>%
+            setNames(c("P_LOSS", "P_DRAW", "P_WIN"))
+            )
 
-M <- matrix(NA, nrow = NROW(df_test2), ncol = G)
-
-for(j in 1:G){
-  M[, j] = ifelse(df_test2$pi_hat >= grid[j], 1, 0)
-}
-
-M2 <- matrix(NA, nrow = G, ncol = 4)
-
-for(i in 1:G){
-  M2[i, 1] = mean((M[, i] == 1) & (df_test2$Y == 1))    # sensibilidade
-  M2[i, 2] = mean((M[, i] == 0) & (df_test2$Y == 0))    # especificidade
-  M2[i, 3] = mean(M[, i] == df_test2$Y)                 # acurácia
-}
-# M2[, 4] = M2[, 1] + M2[, 2] - 1                         # Indice de Youden
-M2[, 4] = (M2[, 1] + M2[, 2])/2                         # acurácia balanceada
-
-# M2
-
-# classificador
-K <- max(which(M2[, 4] == max(M2[, 4])))
-#df_test2$y_hat = M[, min(which(M2[, 4] == max(M2[, 4])))]
-df_test2$y_hat = M[, max(which(M2[, 4] == max(M2[, 4])))]
+df_test2 <- df_test %>% subset(venue == 'Home')
 ```
 
-
 ```{r Matriz de confusão e Acurácia}
-# Classificando vitória (2), empate (1) ou derrota (0)
-# Fatores de corte
-#df_test2$gd_hat <- df_test2$gf_hat - df_test2$ga_hat
-#t1 = 0.07
-#t2 = 0.50
+# Define o label previsto como aquele com maior probabilidade
+prob = table(df_train2$Y)/length(df_train2$Y) 
+df_train2$P_LOSS_adj = df_train2$`P(Y = L)` / prob[1]
+df_train2$P_DRAW_adj = df_train2$`P(Y = D)` / prob[2]
+df_train2$P_WIN_adj = df_train2$`P(Y = W)` / prob[3]
 
-#df_test2$pred_result <- factor(ifelse(df_test2$gd_hat > t2, 2,
-#                                      ifelse(df_test2$gd_hat < t1, 0, 1)))
+df_train2 <- df_train2 %>%
+    mutate(
+    y_hat = case_when(
+      P_LOSS_adj >= P_DRAW_adj & P_LOSS_adj >= P_WIN_adj ~ "L",
+      P_DRAW_adj  >= P_LOSS_adj & P_DRAW_adj  >= P_WIN_adj ~ "D",
+      P_WIN_adj >= P_LOSS_adj & P_WIN_adj >= P_DRAW_adj  ~ "W"
+    )
+  )
 
 # Matriz de Confusão
-conf_matrix <- table(Predito = df_test2$y_hat, Real = df_test2$Y)
+conf_matrix <- table(Real = factor(df_train2$Y, levels = c("L", "D", "W")),
+                     Predito = factor(df_train2$y_hat, levels = c("L", "D", "W")))
+
 print(conf_matrix)
 
-# Acurácia geral
-print(paste("Acuracia: ", M2[K, 3]))
-print(paste("Sensibilidade: ", M2[K, 1]))
-print(paste("Especificidade: ", M2[K, 2]))
-print(paste("Acuracia balanceada: ", M2[K, 4]))
+# Acurácia
+acc <- sum(diag(conf_matrix)) / sum(conf_matrix)
+print(paste("Acurácia geral:", round(acc, 4)))
+
+```
+
+```{r Matriz de confusão e Acurácia}
+# Define o label previsto como aquele com maior probabilidade
+df_test2 <- df_test2 %>%
+  mutate(
+    P_LOSS_adj = P_LOSS / p[1],
+    P_DRAW_adj = P_DRAW / p[2],
+    P_WIN_adj = P_WIN / p[3],
+    y_hat = case_when(
+      P_LOSS_adj >= P_DRAW_adj & P_LOSS_adj >= P_WIN_adj ~ "L",
+      P_DRAW_adj  >= P_LOSS_adj & P_DRAW_adj  >= P_WIN_adj ~ "D",
+      P_WIN_adj >= P_LOSS_adj & P_WIN_adj >= P_DRAW_adj  ~ "W"
+    )
+  )
+
+# Matriz de Confusão
+conf_matrix <- table(Real = factor(df_test2$Y, levels = c("L", "D", "W")),
+                     Predito = factor(df_test2$y_hat, levels = c("L", "D", "W")))
+
+print(conf_matrix)
+
+# Acurácia
+acc <- sum(diag(conf_matrix)) / sum(conf_matrix)
+print(paste("Acurácia geral:", round(acc, 4)))
+
 ```
