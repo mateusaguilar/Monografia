@@ -1,12 +1,12 @@
 ---
-title: "static_model"
+title: "log_model"
 author: "Mateus Aguilar"
 date: "`r format(Sys.Date(), '%d-%m-%Y')`"
 output: html_document
 ---
 ```{r}
 #library(brms)
-unloadNamespace("FootStats")
+#unloadNamespace("FootStats")
 ```
 
 ```{r}
@@ -21,10 +21,15 @@ df_train$Y <- factor(df_train$resultado,
 
 
 ```{r Modelo logal, include=FALSE}
-log <- brm(Y ~  (0 + atk | team_name) + (0 + def | opponent) + home:team_name, 
-                data = df_train, 
-                family = categorical(link = 'logit', 
-                                     refcat = 'L'))
+log <- brm(
+  Y ~ -1 + (0 + atk | team_name) + (0 + def | opponent) + home,
+  data = df_train,
+  family = categorical(link = "logit", refcat = "L"),
+  chains = 6,
+  iter = 4000,
+  cores = 4
+)
+
 summary(log)
 a = ranef(log)
 ```
@@ -63,7 +68,7 @@ df_train <- df_train %>%
            merge(
              table %>% select(team_name, opponent, round, 
                               `P(Y = L)`,`P(Y = D)`,`P(Y = W)`), 
-             by = c('round', 'team_name', 'opponent')
+                        by = c('round', 'team_name', 'opponent')
              )
 
 df_train2 <- df_train %>% subset(venue == 'Home')
@@ -114,10 +119,10 @@ print(paste("Acurácia geral:", round(acc, 4)))
 ```{r Matriz de confusão e Acurácia}
 # Define o label previsto como aquele com maior probabilidade
 df_test2 <- df_test2 %>%
-  mutate(
-    P_LOSS_adj = P_LOSS / p[1],
-    P_DRAW_adj = P_DRAW / p[2],
-    P_WIN_adj = P_WIN / p[3],
+ mutate(
+   P_LOSS_adj = P_LOSS / prob[1],
+   P_DRAW_adj = P_DRAW / prob[2],
+   P_WIN_adj = P_WIN / prob[3],
     y_hat = case_when(
       P_LOSS_adj >= P_DRAW_adj & P_LOSS_adj >= P_WIN_adj ~ "L",
       P_DRAW_adj  >= P_LOSS_adj & P_DRAW_adj  >= P_WIN_adj ~ "D",
