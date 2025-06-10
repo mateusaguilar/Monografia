@@ -22,26 +22,26 @@ a = ranef(pos)
 ```
 
 ```{r Fatores}
-atk = data.frame(atk = a$cond$team_name$atk, team_name = row.names(a$cond$team_name))
-def = data.frame(a$cond$opponent, opponent = row.names(a$cond$opponent))
-home = data.frame(home = a$cond$team_name$home, team_name = row.names(a$cond$team_name))
+# atk = data.frame(atk = a$cond$team_name$atk, team_name = row.names(a$cond$team_name))
+# def = data.frame(a$cond$opponent, opponent = row.names(a$cond$opponent))
+# home = data.frame(home = a$cond$team_name$home, team_name = row.names(a$cond$team_name))
 ```
 
 ```{r}
 c = coef(pos)
 #d = c$cond$team_name[1, c("(Intercept)", "home")]
-d = c$cond$team_name[1, c("(Intercept)")]
+# d = c$cond$team_name[1, c("(Intercept)")]
 vars <- data.frame(model.matrix(pos)) 
 #vars2 <- data.frame('Intercept' = vars[,1] * d[1,1], 'home' =  vars[,2] * d[1,2])
-vars2 <- data.frame('Intercept' = vars[,1] * d[1])
+# vars2 <- data.frame('Intercept' = vars[,1] * d[1])
 
 table <- df_train %>% 
   select(gf, ga, round, venue, team_name, opponent) %>% 
-  bind_cols(vars2) %>%
-  bind_cols(data.frame(Predito = predict(pos))) %>% 
-  merge(atk, by = 'team_name') %>% 
-  merge(def, by = 'opponent') %>% 
-  merge(home, by = 'team_name')
+  # bind_cols(vars2) %>% 
+  bind_cols(data.frame(Predito = predict(pos))) # %>% 
+  # merge(atk, by = 'team_name') %>% 
+  # merge(def, by = 'opponent') %>% 
+  # merge(home, by = 'team_name')
 
 #View(table)
 ```
@@ -199,37 +199,37 @@ print(paste("Acurácia geral:", acc))
 
 
 ```{r, Multiclasse}
-# Classificador na Base de teste
-
-G = 100
-grid <- seq(min(df_test2$gd_hat), 
-            max(df_test2$gd_hat), 
-            length.out = G)
-
-M <- matrix(0, nrow = G, ncol = G)
-
-
-for(i in 1:G){
-  for(j in i:G){
-      
-    M[i, j] =
-      ( sum( (df_test2$gd_hat <= grid[i]) & (df_test2$Y == 'L') ) / sum(df_test2$Y == 'L') + 
-      sum( (df_test2$gd_hat > grid[i] & df_test2$gd_hat < grid[j]) & (df_test2$Y == 'D') ) / sum((df_test2$Y == 'D')) + 
-      sum( (df_test2$gd_hat >= grid[j]) & (df_test2$Y == 'W') ) / sum(df_test2$Y == 'W') ) / 3
-    
-  }
-}
-
-
-# Encontrando os melhores limiares (t1 e t2) para maximizar a acurácia
-indices_max <- which(M == max(M, na.rm = TRUE), arr.ind = TRUE)
-#i_max <- indices_max[1, "row"]
-#j_max <- indices_max[1, "col"]
-
-#t1 <- grid[j_max]
-#t2 <- grid[i_max]
-#t1  
-#t2  
+# # Classificador na Base de teste
+# 
+# G = 100
+# grid <- seq(min(df_test2$gd_hat), 
+#             max(df_test2$gd_hat), 
+#             length.out = G)
+# 
+# M <- matrix(0, nrow = G, ncol = G)
+# 
+# 
+# for(i in 1:G){
+#   for(j in i:G){
+#       
+#     M[i, j] =
+#       ( sum( (df_test2$gd_hat <= grid[i]) & (df_test2$Y == 'L') ) / sum(df_test2$Y == 'L') + 
+#       sum( (df_test2$gd_hat > grid[i] & df_test2$gd_hat < grid[j]) & (df_test2$Y == 'D') ) / sum((df_test2$Y == 'D')) + 
+#       sum( (df_test2$gd_hat >= grid[j]) & (df_test2$Y == 'W') ) / sum(df_test2$Y == 'W') ) / 3
+#     
+#   }
+# }
+# 
+# 
+# # Encontrando os melhores limiares (t1 e t2) para maximizar a acurácia
+# indices_max <- which(M == max(M, na.rm = TRUE), arr.ind = TRUE)
+# #i_max <- indices_max[1, "row"]
+# #j_max <- indices_max[1, "col"]
+# 
+# #t1 <- grid[j_max]
+# #t2 <- grid[i_max]
+# #t1  
+# #t2  
 
 
 ```
@@ -237,22 +237,22 @@ indices_max <- which(M == max(M, na.rm = TRUE), arr.ind = TRUE)
 
 
 ```{r}
-taus = matrix(NA, nrow = NROW(indices_max), ncol = 2)
-for(i in 1:NROW(indices_max)){
-  taus[i, ] = c(grid[indices_max[i, 1]], grid[indices_max[i, 2]])
-  
-}
-
-taus_diff = taus[, 2] - taus[, 1]
-tau_max_diff = which(taus_diff == min(taus_diff))
-t1 = taus[tau_max_diff, 1]
-t2 = taus[tau_max_diff, 2]
-t1; t2
-
-# Classificação final com os limiares otimizados
-df_test2$y_hat <- factor(ifelse(df_test2$gd_hat <= t1, 'L',
-                                ifelse(df_test2$gd_hat >= t2, 'W', 'D')),
-                                levels = c("L", "D", "W"))
+# taus = matrix(NA, nrow = NROW(indices_max), ncol = 2)
+# for(i in 1:NROW(indices_max)){
+#   taus[i, ] = c(grid[indices_max[i, 1]], grid[indices_max[i, 2]])
+# 
+# }
+# 
+# taus_diff = taus[, 2] - taus[, 1]
+# tau_max_diff = which(taus_diff == min(taus_diff))
+# t1 = taus[tau_max_diff, 1]
+# t2 = taus[tau_max_diff, 2]
+# t1; t2
+# 
+# # Classificação final com os limiares otimizados
+# df_test2$y_hat <- factor(ifelse(df_test2$gd_hat <= t1, 'L',
+#                                 ifelse(df_test2$gd_hat >= t2, 'W', 'D')),
+#                                 levels = c("L", "D", "W"))
 ```
 
 ```{r Matriz de confusão e Acurácia}
@@ -270,3 +270,30 @@ acc = sum(diag(conf_matrix))/sum(conf_matrix)
 print(paste("Acurácia geral:", acc))
 ```
 
+```{r}
+library(e1071)
+
+out = svm(Y ~ gd_hat, data = df_train2)
+
+# Matriz de Confusão
+conf_matrix <- table(Real = df_train2$Y, Predito = predict(out))
+print(conf_matrix)
+
+# Cálculo da Acurácia Geral
+acc = sum(diag(conf_matrix))/sum(conf_matrix)
+print(paste("Acurácia geral:", acc))
+```
+
+```{r}
+library(e1071)
+
+# out = svm(Y ~ gd_hat, data = df_train2)
+
+# Matriz de Confusão
+conf_matrix <- table(Real = df_test2$Y, Predito = predict(out, newdata = df_test2$gd_hat))
+print(conf_matrix)
+
+# Cálculo da Acurácia Geral
+acc = sum(diag(conf_matrix))/sum(conf_matrix)
+print(paste("Acurácia geral:", acc))
+```
