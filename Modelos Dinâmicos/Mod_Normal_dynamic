@@ -1,0 +1,206 @@
+```{r}
+#rm(list=ls())
+
+#library(tidyverse)
+library(rstan)
+#library(bayesplot)
+unloadNamespace("FootStats")
+
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE) 
+```
+
+
+```{r}
+unique_teams <- unique(c(df_train$team_name, df_train$opponent))
+
+df_train <- df_train %>% 
+            mutate(
+              team_name_index = match(team_name, unique_teams),
+              opponent_index = match(opponent, unique_teams)
+            )
+```
+
+
+# Fit
+
+```{r}
+data = list(
+  nteams = length(unique(df_train$team_name_index)),
+  ngames = nrow(df_train),
+  nrounds = length(unique(df_train$round)),
+  i_round = df_train$round,
+  x= df_train$gf,
+  y = df_train$ga,
+  h = df_train$team_name_index,
+  a = df_train$opponent_index
+)
+```
+
+```{r}
+model_norm = stan_model("models/dynamic_normal.stan", model_name = "dynamic_normal")
+
+iter = 1000 # 10000
+chains = 4
+cores = 8
+control = list(max_treedepth = 15)
+
+fit_norm = sampling(model1,
+              data = data,
+              iter = iter,
+              chains = chains,
+              cores = cores,
+              control = control,
+              refresh = 100
+              )
+saveRDS(fit_norm, "results/dynamic_normal.rds")
+fit_norm = readRDS("results/dynamic_normal.rds")
+```
+
+```{r}
+print(fit_norm)
+```
+
+
+# Analysis
+
+```{r}
+traceplot(fit_norm, inc_warmup = TRUE, pars = c("att[1,2]"))
+```
+
+
+# Simulations
+
+```{r}
+predict_games = function(game_index, possible_values, fit){
+  samples = rstan::extract(fit)
+  
+  x = samples$x_pred[, game_index]
+  y = samples$y_pred[, game_index]
+  
+  prob_matrix = matrix(0, nrow = length(possible_values), ncol = length(possible_values))
+  
+  for (i in possible_values) {
+    for (j in possible_values) {
+      joint_count = sum(x == i & y == j)
+      prob_matrix[i + 1, j + 1] = joint_count / length(x)
+    }
+  }
+  
+  rownames(prob_matrix) = possible_values
+  colnames(prob_matrix) = possible_values
+  
+  return(round(prob_matrix*100, 1))
+}
+```
+
+```{r}
+matrix1 = predict_games(379, 0:5, fit_norm)
+matrix1
+```
+
+```{r}
+sum(matrix1[lower.tri(matrix1)])
+sum(diag(matrix1))
+sum(matrix1[upper.tri(matrix1)])
+```
+
+
+```{r}
+predict_league = function(fit, new_data){
+  samples = rstan::extract(fit)
+
+  new_data$home_win = NA
+  new_data$draw = NA
+  new_data$home_lost = NA
+  
+  for(i in 1:nrow(new_data)){
+    h = new_data[i, ]$team_name_index
+    a = new_data[i, ]$opponent_index
+    x = samples$x_pred[, i]
+    y = samples$y_pred[, i]
+    n_preds = samples$x_pred[,i]
+    
+    new_data[i, ]$home_win = sum(x > y)/length(n_preds)
+    new_data[i, ]$draw = sum(x == y)/length(n_preds)
+    new_data[i, ]$home_lost = sum(x < y)/length(n_preds)
+  }
+  
+  predicted_games = new_data %>% 
+    mutate(
+      points_home = case_when(
+        home_win >= draw & home_win >= home_lost ~ 3,  # WIN
+        draw >= home_win & draw >= home_lost ~ 1, # DRAW
+        TRUE ~ 0  # LOSE
+      ),
+      points_away = case_when(
+         home_win >= draw & home_win >= home_lost ~ 0,  # WIN
+         draw >= home_win & draw >= home_lost ~ 1, # DRAW
+         TRUE ~ 3  # LOSE
+       ),
+       result_predicted = case_when(
+         home_win >= draw & home_win >= home_lost ~ 'W',  # WIN
+         draw >= home_win & draw >= home_lost ~ 'D', # DRAW
+         TRUE ~ 'L'  # LOSE
+       ),
+       sucess = if_else(result_predicted == result, 1, 0)
+    )
+  
+  standings_home = predicted_games %>% 
+    group_by(team_name) %>% 
+    summarise(points = sum(points_home),
+              wins = sum(result_predicted == "W"),
+              draws = sum(result_predicted == "D"),
+              loses = sum(result_predicted == "L"),
+              ) %>% 
+    arrange(desc(points))
+  standings_away = predicted_games %>% 
+    group_by(opponent) %>% 
+    summarise(points = sum(points_away),
+              wins = sum(result_predicted == "L"),
+              draws = sum(result_predicted == "D"),
+              loses = sum(result_predicted == "W"),
+              ) %>% 
+    arrange(desc(points))
+  
+  standings =  bind_rows(
+    standings_home %>% mutate(team = team_name),
+    standings_away %>% mutate(team = opponent)
+  ) %>%
+    group_by(team) %>%
+    summarise(
+      points = sum(points),
+      wins = sum(wins),
+      draws = sum(draws),
+      loses = sum(loses)
+    ) %>%
+    arrange(desc(points))
+  
+  
+  return(list(predicted_games, standings))
+}
+```
+
+```{r}
+df_predicted1 = predict_league(fit_norm, df_test)
+mean(df_predicted1[[1]]$sucess)
+```
+
+```{r}
+library(caret)
+
+# Confusion Matrix
+cm <- confusionMatrix(
+  factor(df_predicted1[[1]]$result_predicted, levels = c("W", "D", "L")),
+  factor(df_predicted1[[1]]$result, levels = c("W", "D", "L"))
+)
+
+# Balanced Accuracy (macro-averaged recall)
+acc <- cm$byClass[,"Balanced Accuracy"]
+print(acc)
+
+# Se quiser a média geral (balanced accuracy média das classes):
+mean_acc <- mean(acc, na.rm = TRUE)
+print(mean_acc)
+
+```
