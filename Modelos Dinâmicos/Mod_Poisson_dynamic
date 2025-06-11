@@ -19,6 +19,11 @@ df_train <- df_train %>%
               team_name_index = match(team_name, unique_teams),
               opponent_index = match(opponent, unique_teams)
             )
+df_test<- df_test %>% 
+            mutate(
+              team_name_index_new = match(team_name, unique_teams),
+              opponent_index_new = match(opponent, unique_teams)
+            )
 ```
 
 
@@ -28,24 +33,31 @@ df_train <- df_train %>%
 data = list(
   nteams = length(unique(df_train$team_name_index)),
   ngames = nrow(df_train),
-  nrounds = length(unique(df_train$round)),
+  nrounds = max(c(df_train$round, df_test$round)),
   i_round = df_train$round,
-  x= df_train$gf,
-  y = df_train$ga,
-  h = df_train$team_name_index,
-  a = df_train$opponent_index
+  gf = df_train$gf,
+  ga = df_train$ga,
+  team_name_index = df_train$team_name_index,
+  opponent_index = df_train$opponent_index,
+  
+  # test
+  ngames_new = nrow(df_test),
+  i_round_new = df_test$round,
+  team_name_index_new = df_test$team_name_index_new,
+  opponent_index_new = df_test$opponent_index_new
 )
 ```
 
 ```{r}
 model_pos = stan_model("models/dynamic_poisson.stan", model_name = "dynamic_poisson")
 
-iter = 1000 # 10000
+iter = 5000 # 10000
 chains = 4
 cores = 8
-control = list(max_treedepth = 15)
+control = list(max_treedepth = 15,
+               adapt_delta = 0.95)
 
-fit_pos = sampling(model1,
+fit_pos = sampling(model_pos,
               data = data,
               iter = iter,
               chains = chains,
@@ -75,34 +87,44 @@ traceplot(fit_pos, inc_warmup = TRUE, pars = c("att[1,2]"))
 predict_games = function(game_index, possible_values, fit){
   samples = rstan::extract(fit)
   
-  x = samples$x_pred[, game_index]
-  y = samples$y_pred[, game_index]
+  x = samples$gf_new[, game_index]
+  y = samples$ga_new[, game_index]
   
   prob_matrix = matrix(0, nrow = length(possible_values), ncol = length(possible_values))
   
   for (i in possible_values) {
     for (j in possible_values) {
+      row_idx = which(possible_values == i)
+      col_idx = which(possible_values == j)
+      
       joint_count = sum(x == i & y == j)
-      prob_matrix[i + 1, j + 1] = joint_count / length(x)
+      prob_matrix[row_idx, col_idx] = joint_count / length(x)
     }
   }
   
   rownames(prob_matrix) = possible_values
   colnames(prob_matrix) = possible_values
   
-  return(round(prob_matrix*100, 1))
+  return(round(prob_matrix * 100, 1))
 }
+
 ```
 
 ```{r}
-matrix1 = predict_games(379, 0:5, fit_pos)
+game_index = 10
+matrix1 = predict_games(game_index, 0:5, fit_pos)
+cat("Jogo:", df_test$team_name[game_index], "x", df_test$opponent[game_index], "na rodada", df_test$round[game_index], "\n")
 matrix1
 ```
 
 ```{r}
-sum(matrix1[lower.tri(matrix1)])
-sum(diag(matrix1))
-sum(matrix1[upper.tri(matrix1)])
+win = sum(matrix1[lower.tri(matrix1)])
+draw = sum(diag(matrix1))
+loss = sum(matrix1[upper.tri(matrix1)])
+
+cat("Vitória:", round(win, 3), "%\n")
+cat("Empate:", round(draw, 3), "%\n")
+cat("Derrota:", round(loss, 3), "%\n")
 ```
 
 ```{r}
@@ -187,8 +209,8 @@ predict_league = function(fit, new_data){
 
 ```{r}
 Paulo <- rstan::extract(fit_pos)
-df_train$gf_hat <- colMeans(exp(Paulo$log_lambda)) #gf_hat
-df_train$ga_hat <- colMeans(exp(Paulo$log_mu)) #ga_hat
+df_train$gf_hat <- colMeans(exp(Paulo$theta1)) #gf_hat
+df_train$ga_hat <- colMeans(exp(Paulo$theta2)) #ga_hat
 
 df_train$gd_hat = df_train$gf_hat - df_train$ga_hat
 
@@ -300,6 +322,18 @@ acc = sum(diag(conf_matrix))/sum(conf_matrix)
 print(paste("Acurácia geral:", acc))
 ```
 
+```{r}
+classes <- c("W", "D", "L")
+
+acuracias <- sapply(classes, function(classe) {
+  idx <- which(df_test2$Y == classe)          # linhas da classe real
+  mean(df_test2$y_hat[idx] == df_test2$Y[idx])  # proporção de acertos naquela classe
+})
+
+tabela_acuracias <- data.frame(Classe = classes, Acuracia = acuracias)
+print(tabela_acuracias)
+
+```
 
 
 ```{r}
