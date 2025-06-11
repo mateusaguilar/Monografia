@@ -19,6 +19,11 @@ df_train <- df_train %>%
               team_name_index = match(team_name, unique_teams),
               opponent_index = match(opponent, unique_teams)
             )
+df_test <- df_test %>% 
+            mutate(
+              team_name_index = match(team_name, unique_teams),
+              opponent_index = match(opponent, unique_teams)
+            )
 ```
 
 
@@ -26,14 +31,21 @@ df_train <- df_train %>%
 
 ```{r}
 data = list(
+  # Train
   nteams = length(unique(df_train$team_name_index)),
   ngames = nrow(df_train),
-  nrounds = length(unique(df_train$round)),
+  nrounds = max(c(df_train$round, df_test$round)),
   i_round = df_train$round,
-  x= df_train$gf,
+  x = df_train$gf,
   y = df_train$ga,
   h = df_train$team_name_index,
-  a = df_train$opponent_index
+  a = df_train$opponent_index,
+  
+  # Test
+  ngames_new = nrow(df_test),
+  i_round_new = df_test$round,
+  h_new = df_test$team_name_index,
+  a_new = df_test$opponent_index
 )
 ```
 
@@ -45,7 +57,7 @@ chains = 4
 cores = 8
 control = list(max_treedepth = 15)
 
-fit_norm = sampling(model1,
+fit_norm = sampling(model_norm,
               data = data,
               iter = iter,
               chains = chains,
@@ -72,37 +84,41 @@ traceplot(fit_norm, inc_warmup = TRUE, pars = c("att[1,2]"))
 # Simulations
 
 ```{r}
-predict_games = function(game_index, possible_values, fit){
+predict_diff_prob = function(fit, game_id, max_diff = 5) {
   samples = rstan::extract(fit)
   
-  x = samples$x_pred[, game_index]
-  y = samples$y_pred[, game_index]
+  x = round(samples$x_new[, game_id])
+  y = round(samples$y_new[, game_id])
   
-  prob_matrix = matrix(0, nrow = length(possible_values), ncol = length(possible_values))
+  # Considerar só diferenças dentro do range [-max_diff, max_diff]
+  diff = x - y
+  diff = diff[diff >= -max_diff & diff <= max_diff]
   
-  for (i in possible_values) {
-    for (j in possible_values) {
-      joint_count = sum(x == i & y == j)
-      prob_matrix[i + 1, j + 1] = joint_count / length(x)
-    }
-  }
+  possible_diff = -max_diff:max_diff
+  prob_diff = sapply(possible_diff, function(d) mean(diff == d))
   
-  rownames(prob_matrix) = possible_values
-  colnames(prob_matrix) = possible_values
-  
-  return(round(prob_matrix*100, 1))
+  names(prob_diff) = possible_diff
+  return(round(prob_diff * 100, 2))
 }
+
 ```
 
 ```{r}
-matrix1 = predict_games(379, 0:5, fit_norm)
-matrix1
+game_index = 2
+diff_prob_norm = predict_diff_prob(fit_norm, game_index, max_diff = 5)
+cat("Jogo:", df_test$team_name[game_index], "x", df_test$opponent[game_index], "na rodada", df_test$round[game_index], "\n")
+print(diff_prob_norm)
+
 ```
 
 ```{r}
-sum(matrix1[lower.tri(matrix1)])
-sum(diag(matrix1))
-sum(matrix1[upper.tri(matrix1)])
+win_prob = sum(diff_prob_norm[as.numeric(names(diff_prob_norm)) > 0])
+draw_prob = diff_prob_norm["0"]
+loss_prob = sum(diff_prob_norm[as.numeric(names(diff_prob_norm)) < 0])
+
+cat("Vitória:", round(win_prob, 3), "%\n")
+cat("Empate:", round(draw_prob, 3), "%\n")
+cat("Derrota:", round(loss_prob, 3), "%\n")
 ```
 
 
@@ -180,6 +196,137 @@ predict_league = function(fit, new_data){
   return(list(predicted_games, standings))
 }
 ```
+
+```{r}
+# ----------------------------
+# Função para encontrar os limiares ótimos no treino
+# ----------------------------
+find_thresholds <- function(df_train2) {
+  G <- 100
+  grid <- seq(min(df_train2$gd_hat), max(df_train2$gd_hat), length.out = G)
+  
+  M <- matrix(0, nrow = G, ncol = G)
+  
+  for(i in 1:G){
+    for(j in i:G){
+      M[i, j] <-
+        ( sum((df_train2$gd_hat <= grid[i]) & (df_train2$Y == 'L')) / sum(df_train2$Y == 'L') +
+          sum((df_train2$gd_hat > grid[i] & df_train2$gd_hat < grid[j]) & (df_train2$Y == 'D')) / sum(df_train2$Y == 'D') +
+          sum((df_train2$gd_hat >= grid[j]) & (df_train2$Y == 'W')) / sum(df_train2$Y == 'W')
+        ) / 3
+    }
+  }
+  
+  indices_max <- which(M == max(M, na.rm = TRUE), arr.ind = TRUE)
+  
+  taus <- matrix(NA, nrow = NROW(indices_max), ncol = 2)
+  for(k in 1:NROW(indices_max)){
+    taus[k, ] <- c(grid[indices_max[k, 1]], grid[indices_max[k, 2]])
+  }
+  
+  taus_diff <- taus[, 2] - taus[, 1]
+  tau_max_diff <- which(taus_diff == max(taus_diff))
+  
+  t1 <- taus[tau_max_diff, 1]
+  t2 <- taus[tau_max_diff, 2]
+  
+  return(c(t1 = t1, t2 = t2))
+}
+
+# ----------------------------
+# Função para classificar com base nos limiares
+# ----------------------------
+classify_results <- function(df, t1, t2) {
+  df <- df %>%
+    mutate(y_hat = factor(
+      ifelse(gd_hat <= t1, 'L',
+             ifelse(gd_hat >= t2, 'W', 'D')),
+      levels = c("L", "D", "W")
+    ))
+  return(df)
+}
+
+# ----------------------------
+# Função para calcular matriz de confusão e acurácia
+# ----------------------------
+evaluate_accuracy <- function(df) {
+  conf_matrix <- table(Real = df$Y, Predito = df$y_hat)
+  print(conf_matrix)
+  
+  acc_total <- sum(diag(conf_matrix)) / sum(conf_matrix)
+  cat("Acurácia geral:", round(acc_total, 4), "\n")
+  
+  classes <- c("W", "D", "L")
+  acc_per_class <- sapply(classes, function(classe) {
+    idx <- which(df$Y == classe)
+    mean(df$y_hat[idx] == df$Y[idx])
+  })
+  acc_df <- data.frame(Classe = classes, Acuracia = round(acc_per_class, 4))
+  print(acc_df)
+  
+  return(list(conf_matrix = conf_matrix, acc_total = acc_total, acc_per_class = acc_df))
+}
+
+```
+
+
+```{r}
+# ----------------------------
+# 1. Extrair médias preditas do modelo Stan
+# ----------------------------
+samples <- rstan::extract(fit_norm)
+
+gf_hat_train <- colMeans(samples$x_pred)
+ga_hat_train <- colMeans(samples$y_pred)
+gf_hat_test  <- colMeans(samples$x_new)
+ga_hat_test  <- colMeans(samples$y_new)
+
+# ----------------------------
+# 2. Criar dataframes com variáveis preditas
+# ----------------------------
+df_train2 <- df_train %>%
+  mutate(
+    gf_hat = gf_hat_train,
+    ga_hat = ga_hat_train,
+    gd_hat = gf_hat - ga_hat,
+    Y = factor(resultado, levels = c(0, 1, 2), labels = c("L", "D", "W"))
+  ) %>%
+  filter(venue == "Home")
+
+df_test2 <- df_test %>%
+  mutate(
+    gf_hat = gf_hat_test,
+    ga_hat = ga_hat_test,
+    gd_hat = gf_hat - ga_hat,
+    Y = factor(resultado, levels = c(0, 1, 2), labels = c("L", "D", "W"))
+  ) %>%
+  filter(venue == "Home")
+
+# ----------------------------
+# 3. Encontrar os limiares ótimos no treino
+# ----------------------------
+thresholds <- find_thresholds(df_train2)
+t1 <- thresholds["t1"]
+t2 <- thresholds["t2"]
+cat("Limiar t1:", t1, "\n")
+cat("Limiar t2:", t2, "\n")
+
+# ----------------------------
+# 4. Classificar com base nos limiares
+# ----------------------------
+df_train2 <- classify_results(df_train2, t1, t2)
+df_test2  <- classify_results(df_test2, t1, t2)
+
+# ----------------------------
+# 5. Avaliar desempenho no treino e teste
+# ----------------------------
+cat("\nAvaliação no treino:\n")
+train_results <- evaluate_accuracy(df_train2)
+
+cat("\nAvaliação no teste:\n")
+test_results <- evaluate_accuracy(df_test2)
+```
+
 
 ```{r}
 df_predicted1 = predict_league(fit_norm, df_test)
