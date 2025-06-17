@@ -19,10 +19,10 @@ df_train <- df_train %>%
               team_name_index = match(team_name, unique_teams),
               opponent_index = match(opponent, unique_teams)
             )
-df_test <- df_test %>% 
+df_test<- df_test %>% 
             mutate(
-              team_name_index = match(team_name, unique_teams),
-              opponent_index = match(opponent, unique_teams)
+              team_name_index_new = match(team_name, unique_teams),
+              opponent_index_new = match(opponent, unique_teams)
             )
 ```
 
@@ -31,30 +31,30 @@ df_test <- df_test %>%
 
 ```{r}
 data = list(
-  # Train
   nteams = length(unique(df_train$team_name_index)),
   ngames = nrow(df_train),
   nrounds = max(c(df_train$round, df_test$round)),
   i_round = df_train$round,
-  x = df_train$gf,
-  y = df_train$ga,
-  h = df_train$team_name_index,
-  a = df_train$opponent_index,
+  gf = df_train$gf,
+  ga = df_train$ga,
+  team_name_index = df_train$team_name_index,
+  opponent_index = df_train$opponent_index,
   
-  # Test
+  # test
   ngames_new = nrow(df_test),
   i_round_new = df_test$round,
-  h_new = df_test$team_name_index,
-  a_new = df_test$opponent_index
+  team_name_index_new = df_test$team_name_index_new,
+  opponent_index_new = df_test$opponent_index_new
 )
 ```
 
-```{r}
-model_norm = stan_model("models/dynamic_normal.stan", model_name = "dynamic_normal")
 
-iter = 1000 # 10000
+```{r}
+model_norm = stan_model("../models/dynamic_normal.stan", model_name = "dynamic_normal")
+
+iter = 100 # rodar com 10000 para conferir [!]
 chains = 4
-cores = 8
+cores = 4
 control = list(max_treedepth = 15)
 
 fit_norm = sampling(model_norm,
@@ -65,8 +65,8 @@ fit_norm = sampling(model_norm,
               control = control,
               refresh = 100
               )
-saveRDS(fit_norm, "results/dynamic_normal.rds")
-fit_norm = readRDS("results/dynamic_normal.rds")
+saveRDS(fit_norm, "../results/dynamic_normal.rds")
+fit_norm = readRDS("../results/dynamic_normal.rds")
 ```
 
 ```{r}
@@ -82,120 +82,6 @@ traceplot(fit_norm, inc_warmup = TRUE, pars = c("att[1,2]"))
 
 
 # Simulations
-
-```{r}
-predict_diff_prob = function(fit, game_id, max_diff = 5) {
-  samples = rstan::extract(fit)
-  
-  x = round(samples$x_new[, game_id])
-  y = round(samples$y_new[, game_id])
-  
-  # Considerar só diferenças dentro do range [-max_diff, max_diff]
-  diff = x - y
-  diff = diff[diff >= -max_diff & diff <= max_diff]
-  
-  possible_diff = -max_diff:max_diff
-  prob_diff = sapply(possible_diff, function(d) mean(diff == d))
-  
-  names(prob_diff) = possible_diff
-  return(round(prob_diff * 100, 2))
-}
-
-```
-
-```{r}
-game_index = 2
-diff_prob_norm = predict_diff_prob(fit_norm, game_index, max_diff = 5)
-cat("Jogo:", df_test$team_name[game_index], "x", df_test$opponent[game_index], "na rodada", df_test$round[game_index], "\n")
-print(diff_prob_norm)
-
-```
-
-```{r}
-win_prob = sum(diff_prob_norm[as.numeric(names(diff_prob_norm)) > 0])
-draw_prob = diff_prob_norm["0"]
-loss_prob = sum(diff_prob_norm[as.numeric(names(diff_prob_norm)) < 0])
-
-cat("Vitória:", round(win_prob, 3), "%\n")
-cat("Empate:", round(draw_prob, 3), "%\n")
-cat("Derrota:", round(loss_prob, 3), "%\n")
-```
-
-
-```{r}
-predict_league = function(fit, new_data){
-  samples = rstan::extract(fit)
-
-  new_data$home_win = NA
-  new_data$draw = NA
-  new_data$home_lost = NA
-  
-  for(i in 1:nrow(new_data)){
-    h = new_data[i, ]$team_name_index
-    a = new_data[i, ]$opponent_index
-    x = samples$x_pred[, i]
-    y = samples$y_pred[, i]
-    n_preds = samples$x_pred[,i]
-    
-    new_data[i, ]$home_win = sum(x > y)/length(n_preds)
-    new_data[i, ]$draw = sum(x == y)/length(n_preds)
-    new_data[i, ]$home_lost = sum(x < y)/length(n_preds)
-  }
-  
-  predicted_games = new_data %>% 
-    mutate(
-      points_home = case_when(
-        home_win >= draw & home_win >= home_lost ~ 3,  # WIN
-        draw >= home_win & draw >= home_lost ~ 1, # DRAW
-        TRUE ~ 0  # LOSE
-      ),
-      points_away = case_when(
-         home_win >= draw & home_win >= home_lost ~ 0,  # WIN
-         draw >= home_win & draw >= home_lost ~ 1, # DRAW
-         TRUE ~ 3  # LOSE
-       ),
-       result_predicted = case_when(
-         home_win >= draw & home_win >= home_lost ~ 'W',  # WIN
-         draw >= home_win & draw >= home_lost ~ 'D', # DRAW
-         TRUE ~ 'L'  # LOSE
-       ),
-       sucess = if_else(result_predicted == result, 1, 0)
-    )
-  
-  standings_home = predicted_games %>% 
-    group_by(team_name) %>% 
-    summarise(points = sum(points_home),
-              wins = sum(result_predicted == "W"),
-              draws = sum(result_predicted == "D"),
-              loses = sum(result_predicted == "L"),
-              ) %>% 
-    arrange(desc(points))
-  standings_away = predicted_games %>% 
-    group_by(opponent) %>% 
-    summarise(points = sum(points_away),
-              wins = sum(result_predicted == "L"),
-              draws = sum(result_predicted == "D"),
-              loses = sum(result_predicted == "W"),
-              ) %>% 
-    arrange(desc(points))
-  
-  standings =  bind_rows(
-    standings_home %>% mutate(team = team_name),
-    standings_away %>% mutate(team = opponent)
-  ) %>%
-    group_by(team) %>%
-    summarise(
-      points = sum(points),
-      wins = sum(wins),
-      draws = sum(draws),
-      loses = sum(loses)
-    ) %>%
-    arrange(desc(points))
-  
-  
-  return(list(predicted_games, standings))
-}
-```
 
 ```{r}
 # ----------------------------
@@ -276,10 +162,10 @@ evaluate_accuracy <- function(df) {
 # ----------------------------
 samples <- rstan::extract(fit_norm)
 
-gf_hat_train <- colMeans(samples$x_pred)
-ga_hat_train <- colMeans(samples$y_pred)
-gf_hat_test  <- colMeans(samples$x_new)
-ga_hat_test  <- colMeans(samples$y_new)
+gf_hat_train <- colMeans(samples$theta1)
+ga_hat_train <- colMeans(samples$theta2)
+gf_hat_test  <- colMeans(samples$theta1_new)
+ga_hat_test  <- colMeans(samples$theta2_new)
 
 # ----------------------------
 # 2. Criar dataframes com variáveis preditas
@@ -327,27 +213,3 @@ cat("\nAvaliação no teste:\n")
 test_results <- evaluate_accuracy(df_test2)
 ```
 
-
-```{r}
-df_predicted1 = predict_league(fit_norm, df_test)
-mean(df_predicted1[[1]]$sucess)
-```
-
-```{r}
-library(caret)
-
-# Confusion Matrix
-cm <- confusionMatrix(
-  factor(df_predicted1[[1]]$result_predicted, levels = c("W", "D", "L")),
-  factor(df_predicted1[[1]]$result, levels = c("W", "D", "L"))
-)
-
-# Balanced Accuracy (macro-averaged recall)
-acc <- cm$byClass[,"Balanced Accuracy"]
-print(acc)
-
-# Se quiser a média geral (balanced accuracy média das classes):
-mean_acc <- mean(acc, na.rm = TRUE)
-print(mean_acc)
-
-```

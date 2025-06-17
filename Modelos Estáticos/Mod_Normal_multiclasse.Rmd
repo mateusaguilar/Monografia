@@ -325,3 +325,21 @@ print(conf_matrix)
 acc = sum(diag(conf_matrix))/sum(conf_matrix)
 print(paste("Acurácia geral:", acc))
 ```
+
+
+```{r}
+library(DHARMa)
+
+res = simulateResiduals(norm, method = "PIT")
+eps = res$scaledResiduals
+
+H = 10
+hist(eps, breaks = H, probability = TRUE)
+abline(h = 1, lty = 2, col = 'red')
+
+q_eps = qnorm(eps)
+q_eps = q_eps[which(q_eps != Inf)]
+qqnorm(q_eps)
+qqline(q_eps)
+
+```

@@ -5,8 +5,8 @@ date: "`r format(Sys.Date(), '%d-%m-%Y')`"
 output: html_document
 ---
 ```{r}
-#library(brms)
-#unloadNamespace("FootStats")
+library(brms)
+unloadNamespace("FootStats")
 ```
 
 ```{r}
@@ -22,11 +22,13 @@ df_train$Y <- factor(df_train$resultado,
 
 ```{r Modelo logal, include=FALSE}
 log <- brm(
-  Y ~ -1 + (0 + atk | team_name) + (0 + def | opponent) + home,
+  Y ~ (0 + atk | team_name) + (0 + def | opponent) + home,
   data = df_train,
   family = categorical(link = "logit", refcat = "L"),
-  chains = 6,
-  iter = 4000,
+  chains = 4,
+  thin = 5,
+  warmup = 250, # 25000,
+  iter = 500, # 50000,
   cores = 4
 )
 

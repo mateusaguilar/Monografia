@@ -13,12 +13,12 @@ output: html_document
 unloadNamespace("FootStats")
 ```
 
-```{r Modelo posal, include=FALSE}
-pos <- glmmTMB(gf ~ (0 + atk + home | team_name) + (0 + def | opponent), 
+```{r Modelo binomal, include=FALSE}
+binom <- glmmTMB(gf ~ (0 + atk + home | team_name) + (0 + def | opponent), 
                 data = df_train, 
-                family = poisson(link = 'log'))
-summary(pos)
-a = ranef(pos)
+                family = nbinom2(link = 'log'))
+summary(binom)
+a = ranef(binom)
 ```
 
 ```{r Fatores}
@@ -28,20 +28,20 @@ a = ranef(pos)
 ```
 
 ```{r}
-c = coef(pos)
+c = coef(binom)
 #d = c$cond$team_name[1, c("(Intercept)", "home")]
-# d = c$cond$team_name[1, c("(Intercept)")]
-vars <- data.frame(model.matrix(pos)) 
+d = c$cond$team_name[1, c("(Intercept)")]
+vars <- data.frame(model.matrix(binom)) 
 #vars2 <- data.frame('Intercept' = vars[,1] * d[1,1], 'home' =  vars[,2] * d[1,2])
-# vars2 <- data.frame('Intercept' = vars[,1] * d[1])
+vars2 <- data.frame('Intercept' = vars[,1] * d[1])
 
 table <- df_train %>% 
   select(gf, ga, round, venue, team_name, opponent) %>% 
-  # bind_cols(vars2) %>% 
-  bind_cols(data.frame(Predito = predict(pos))) # %>% 
-  # merge(atk, by = 'team_name') %>% 
-  # merge(def, by = 'opponent') %>% 
-  # merge(home, by = 'team_name')
+  bind_cols(vars2) %>%
+  bind_cols(data.frame(Predito = predict(binom))) %>% 
+  merge(atk, by = 'team_name') %>% 
+  merge(def, by = 'opponent') %>% 
+  merge(home, by = 'team_name')
 
 #View(table)
 ```
@@ -51,7 +51,7 @@ df_test <- df_test %>%
   select(gf, ga, round, venue, team_name, opponent, home, atk, def, resultado)
 
 # Previsões para gols marcados (gf_hat)
-df_test$gf_hat <- predict(pos, df_test, type = "response")
+df_test$gf_hat <- predict(binom, df_test, type = "response")
 
 # Criar um novo dataframe para prever gols sofridos (invertendo times)
 df_test_ga <- df_test
@@ -78,7 +78,7 @@ df_train <- df_train %>%
   select(gf, ga, round, venue, team_name, opponent, home, atk, def, resultado)
 
 # Previsões para gols marcados (gf_hat)
-df_train$gf_hat <- predict(pos, df_train, type = "response")
+df_train$gf_hat <- predict(binom, df_train, type = "response")
 
 # Criar um novo dataframe para prever gols sofridos (invertendo times)
 df_train_ga <- df_train
@@ -197,64 +197,6 @@ print(paste("Acurácia geral:", acc))
 ```
 
 
-
-```{r, Multiclasse}
-# # Classificador na Base de teste
-# 
-# G = 100
-# grid <- seq(min(df_test2$gd_hat), 
-#             max(df_test2$gd_hat), 
-#             length.out = G)
-# 
-# M <- matrix(0, nrow = G, ncol = G)
-# 
-# 
-# for(i in 1:G){
-#   for(j in i:G){
-#       
-#     M[i, j] =
-#       ( sum( (df_test2$gd_hat <= grid[i]) & (df_test2$Y == 'L') ) / sum(df_test2$Y == 'L') + 
-#       sum( (df_test2$gd_hat > grid[i] & df_test2$gd_hat < grid[j]) & (df_test2$Y == 'D') ) / sum((df_test2$Y == 'D')) + 
-#       sum( (df_test2$gd_hat >= grid[j]) & (df_test2$Y == 'W') ) / sum(df_test2$Y == 'W') ) / 3
-#     
-#   }
-# }
-# 
-# 
-# # Encontrando os melhores limiares (t1 e t2) para maximizar a acurácia
-# indices_max <- which(M == max(M, na.rm = TRUE), arr.ind = TRUE)
-# #i_max <- indices_max[1, "row"]
-# #j_max <- indices_max[1, "col"]
-# 
-# #t1 <- grid[j_max]
-# #t2 <- grid[i_max]
-# #t1  
-# #t2  
-
-
-```
-
-
-
-```{r}
-# taus = matrix(NA, nrow = NROW(indices_max), ncol = 2)
-# for(i in 1:NROW(indices_max)){
-#   taus[i, ] = c(grid[indices_max[i, 1]], grid[indices_max[i, 2]])
-# 
-# }
-# 
-# taus_diff = taus[, 2] - taus[, 1]
-# tau_max_diff = which(taus_diff == min(taus_diff))
-# t1 = taus[tau_max_diff, 1]
-# t2 = taus[tau_max_diff, 2]
-# t1; t2
-# 
-# # Classificação final com os limiares otimizados
-# df_test2$y_hat <- factor(ifelse(df_test2$gd_hat <= t1, 'L',
-#                                 ifelse(df_test2$gd_hat >= t2, 'W', 'D')),
-#                                 levels = c("L", "D", "W"))
-```
-
 ```{r Matriz de confusão e Acurácia}
 # Classificação final com os limiares otimizados
 df_test2$y_hat <- factor(ifelse(df_test2$gd_hat <= t1, 'L',
@@ -270,30 +212,21 @@ acc = sum(diag(conf_matrix))/sum(conf_matrix)
 print(paste("Acurácia geral:", acc))
 ```
 
-```{r}
-library(e1071)
-
-out = svm(Y ~ gd_hat, data = df_train2)
-
-# Matriz de Confusão
-conf_matrix <- table(Real = df_train2$Y, Predito = predict(out))
-print(conf_matrix)
-
-# Cálculo da Acurácia Geral
-acc = sum(diag(conf_matrix))/sum(conf_matrix)
-print(paste("Acurácia geral:", acc))
-```
 
 ```{r}
-library(e1071)
+library(DHARMa)
 
-# out = svm(Y ~ gd_hat, data = df_train2)
+res = simulateResiduals(binom, method = "PIT")
+eps = res$scaledResiduals
 
-# Matriz de Confusão
-conf_matrix <- table(Real = df_test2$Y, Predito = predict(out, newdata = df_test2$gd_hat))
-print(conf_matrix)
+H = 10
+hist(eps, breaks = H, probability = TRUE)
+abline(h = 1, lty = 2, col = 'red')
 
-# Cálculo da Acurácia Geral
-acc = sum(diag(conf_matrix))/sum(conf_matrix)
-print(paste("Acurácia geral:", acc))
+q_eps = qnorm(eps)
+q_eps = q_eps[which(q_eps != Inf)]
+qqnorm(q_eps)
+qqline(q_eps)
+
 ```
+

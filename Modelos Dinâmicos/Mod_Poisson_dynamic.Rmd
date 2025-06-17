@@ -49,11 +49,11 @@ data = list(
 ```
 
 ```{r}
-model_pos = stan_model("models/dynamic_poisson.stan", model_name = "dynamic_poisson")
+model_pos = stan_model("../models/dynamic_poisson.stan", model_name = "dynamic_poisson")
 
-iter = 5000 # 10000
+iter = 100 # rodar com 10000 para conferir [!]
 chains = 4
-cores = 8
+cores = 4
 control = list(max_treedepth = 15,
                adapt_delta = 0.95)
 
@@ -65,8 +65,8 @@ fit_pos = sampling(model_pos,
               control = control,
               refresh = 100
               )
-saveRDS(fit_pos, "results/dynamic_poisson.rds")
-fit_pos = readRDS("results/dynamic_poisson.rds")
+saveRDS(fit_pos, "../results/dynamic_poisson.rds")
+fit_pos = readRDS("../results/dynamic_poisson.rds")
 ```
 
 ```{r}
